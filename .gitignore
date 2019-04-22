@@ -1,2 +1,4 @@
 
-orm/__pycache__/model.cpython-36.pyc
+*.pyc
+.idea
+.DS_Store

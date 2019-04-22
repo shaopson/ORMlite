@@ -4,32 +4,52 @@ import os
 import sqlite3
 
 
+_db = {
+	
+}
+
+def db_config(name):
+	global _db
+	_db['name'] = name
+
+
+
+
+
 class Database(object):
-	instance = False
-	def __new__(cls,*args,**kwargs):
-		if not cls.instance:
-			cls.instance = super().__new__(cls)
-		return cls.instance
 
-	def __init__(self,name=''):
-		self.name = name
+	def __init__(self,db):
+		self.db = db
+		self.connect = None
+		self.cursor = None
 
-	def __str__(self):
-		return self.name
+	def __enter__(self):
+		self.connect = sqlite3.connect(self.db)
+		self.cursor = self.connect.cursor()
+		return self.cursor
 
-	def __repr__(self):
-		return self.name
-
+	def __exit__(self,exc_type,exc_instance,traceback):
+		if not exc_instance:
+			self.connect.commit()
+		self.connect.close()
 
 
 class RecordNotExistsError(Exception):
 	pass
 
+class MultiRecordError(Exception):
+	pass
+
+
+
+
+
 
 class Utils(object):
 
+	#dump_dict
 	@staticmethod
-	def sql_dict(**kwargs):
+	def dumps_dict(**kwargs):
 		result = []
 		for k,v in kwargs.items():
 			result.append("%s = %s" % (k,Utils.repr(v)))
@@ -49,16 +69,115 @@ class Utils(object):
 		return str(value)
 
 	@staticmethod
-	def get_value(obj,fields):
+	def loads_datetime(value):
+		pass
+
+	@staticmethod
+	def get_attrs(obj,attrs):
 		result = []
-		for field in fields:
-			value = getattr(obj,field)
+		for attr in attrs:
+			value = getattr(obj,atr)
 			result.append(Utils.repr(value))
 		return result
 
 
+class Select(object):
+
+	def __init__(self,table,fields=None,**kwargs):
+		self.table = table
+		self.fields = fields or []
+		self.where = kwargs.get('where',None)
+		self.alias = kwargs.get('alias',None)
+		self.distinct = kwargs.get('distinct',False)
+		self.orderby = kwargs.get('orderby',None)
+		self.limit = kwargs.get('limit',None)
+		self.sql = ''
+
+	def as_sql(self):
+		sql = ['SELECT']
+		if self.distinct:
+			sql.append("DISTINCT")
+		fields = self.fields.copy()
+		if self.alias:
+			alias = ("%s AS %s " % (k,v) for k,v in self.alias.items())
+			fields.extend(alias)
+		sql.append(', '.join(fields))
+		sql.append('FROM')
+		sql.append(self.table)
+		if self.where:
+			sql.append("WHERE %s" % self.where)
+		if self.orderby:
+			sql.append(', '.join(self.orderby))
+		if self.limit:
+			if isinstance(self.limit,slice):
+				start = self.limit.start or 0
+				length = self.limit.stop
+				sql.append("LIMIT %s OFFSET %s" % (length,start))
+			elif isinstance(self.limit,int):
+				sql.append("LIMIT %s" % self.limit)
+		self.sql = ' '.join(sql) + ';'
+		return self.sql
+
+	def __str__(self):
+		return self.sql or self.as_sql()
+
+
+class Insert():
+
+	def __init__(self,table,fields,value):
+		self.table = table
+		self.fields = fields
+		self.value = value
+		self.sql = ''
+
+	def as_sql(self):
+		fields = ', '.join(self.fields)
+		value = ', '.join('?' * len(self.value))
+		sql = "INSERT INTO %s (%s) VALUES (%s);" % (self.table,fields,value)
+		self.sql = sql 
+		return self.sql
+
+	def __str__(self):
+		return self.sql or self.as_sql()
+
+class Update():
+
+	def __init__(self,table,fields,value,where):
+		self.table = table
+		self.fields = fields
+		self.value = value
+		self.where = where
+		self.sql = ''
+
+	def as_sql(self):
+		sql = "UPDATE %s SET %s WHERE %s;"
+		fields = ["%s = ?" % f for f in self.fields]
+		sql = sql % (self.table,', '.join(fields),self.where)
+		self.sql = sql
+		return self.sql
+
+	def __str__(self):
+		return self.sql or self.as_sql()
+
+class Delete():
+
+	def __init__(self,table,where):
+		self.table = table
+		self.where = where
+		self.sql = ''
+
+	def as_sql(self):
+		self.sql = "DELETE FROM %s WHERE %s" % (self.table,self.where)
+		return self.sql
+
+	def __str__(self):
+		return self.sql or self.as_sql()
+
+
+
 class Query(object):
-	db = Database()
+
+	db = Database
 
 	def __init__(self,model):
 		self.model = model
@@ -71,10 +190,8 @@ class Query(object):
 		attrs = dict()
 		result = []
 		for data in datas:
-			index = 0
-			for field in self.fields:
-				attrs[field] = data[index]
-				index += 1
+			for field,value in zip(self.fields,data):
+				attrs[field] = value
 			result.append(self.model(**attrs))
 		return result
 			
@@ -83,62 +200,51 @@ class Query(object):
 		condition = Utils.sql_dict(**query)
 		sql = "SELECT %s FROM %s WHERE %s;" % (','.join(self.fields),self.table,condition)
 		print(sql)
-		conn = sqlite3.connect(self.db.name)
-		cur = conn.cursor()
-		data = []
-		try:
-			cur.execute(sql)
-			data = cur.fetchall()
-		finally:
-			cur.close()
-			conn.close()
+		with self.db(_db['name']) as db:
+			db.execute(sql)
+			data = db.fetchall()
 		if not data:
 			raise RecordNotExistsError('Not query this record:%s' % query)
+		elif len(data) > 1:
+			raise MultiRecordError('Query multi record:%s' % query)
 		attrs = dict()
 		for field,value in zip(self.fields,data[0]):
 			attrs[field] = value
 		return self.model(**attrs)
 
 	def save(self,instance):
-		value = Utils.get_value(instance,self.fields)
-		value = ','.join(value)
-		sql = "INSERT INTO %s (%s) VALUES (%s);" % (self.table,','.join(self.fields),value)
-		print(sql)
-		conn = sqlite3.connect(self.db.name)
-		cur = conn.cursor()
-		data = []
-		try:
-			cur.execute(sql)
-			data = cur.rowcount
-		finally:
-			cur.close()
-			conn.commit()
-			conn.close()
+		value = []
+		for field in self.fields:
+			value.append(getattr(instance,field))
+		sql = Insert(self.table,self.fields,value).as_sql()
+		print(sql,value)
+		with self.db(_db['name']) as db:
+			db.execute(sql,value)
+			data = db.rowcount
 		return data
-
 
 	def all(self):
 		sql = "SELECT %s FROM %s;" % (','.join(self.fields),self.table)
 		print(sql)
-		conn = sqlite3.connect(self.db.name)
-		cur = conn.cursor()
-		data = [] 
-		try:
-			cur.execute(sql)
-			data = cur.fetchall()
-		finally:
-			cur.close()
-			conn.close()
-		return self.make_objects(data)
+		with self.db(_db['name']) as db:
+			db.execute(sql)
+			datas = db.fetchall()
+		attrs = dict()
+		result = []
+		for data in datas:
+			for field,value in zip(self.fields,data):
+				attrs[field] = value
+			result.append(self.model(**attrs))
+		return result
 
-	def delete(self):
+	def delete(self,instance):
 		pass
 
 
-	def update(self):
+	def update(self,fields,condition):
 		pass
 
-	def filter(self):
+	def filter(self,**query):
 		pass
 		
 
@@ -154,24 +260,14 @@ class Field(object):
 		self.null = null
 
 	def constraint(self):
-		s = ''
+		sql = []
 		if self.default:
-			s += " DEFAULT " + self._str(self.default)
+			sql.append("DEFAULT %s" % Utils.repr(self.default))
 		if self.unique:
-			s += " UNIQUE"
+			sql.append("UNIQUE")
 		if not self.null:
-			s += " NOT NULL"
-		return s
-
-	def _str(self,value):
-		import datetime as dt
-		if isinstance(value,(dt.date,dt.time)):
-			return "\'%s\'" % value.isoformat()
-		if isinstance(value,dt.datetime):
-			return "\'%s\'" % value.strstime('%Y-%m-%d %H:%M:%S')
-		if isinstance(value,str):
-			return "\'%s\'" % value
-		return str(value)
+			sql.append("NOT NULL")
+		return ' '.join(sql)
 
 	def define(self):
 		return "%s %s %s" % (self.name,self.column_type,self.constraint())
@@ -237,7 +333,7 @@ class ModelMetaClass(type):
 		attrs['__mapping__'] = mapping
 		attrs['__table__'] = name
 		instance = type.__new__(cls,name,bases,attrs)
-		instance.objects = Query(instance)
+		instance.object = Query(instance)
 		return instance
 
 
@@ -245,13 +341,9 @@ class Model(object,metaclass=ModelMetaClass):
 
 	def __init__(self,**kwargs):
 		for k,v in kwargs.items():
-			if k in self.__mapping__:
-				setattr(self,k,v)
-			else:
-				raise AttributeError("'%s' object has no attribute '%s'" % (self.__class__.__name__,k))
+			setattr(self,k,v)
 
-	def save(self):
-		return self.objects.save(self)
+
 
 
 def migrate(model_list,db):

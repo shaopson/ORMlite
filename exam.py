@@ -1,11 +1,21 @@
-from orm.model import Utils
-import datetime as dt
 
+class Database(object):
 
+	def __init__(self,db):
+		self.db = db
 
-class C():
-	def __getitem__(self,key):
-		print(key)
+	def __enter__(self):
+		print('enter')
+		return 'sss'
 
-c = C()
-c[1:10]
+	def __exit__(self,exc_type,exc_instance,traceback):
+		print('exit')
+		print('1',exc_type)
+		print('2',exc_instance)
+		print('3',traceback)
+
+d = Database('1')
+
+with d as a:
+	raise KeyError('fdf')
+	pass
