@@ -4,27 +4,30 @@ import os
 import sqlite3
 
 
-_db = {
-	
+### database ###
+
+db_config = {
+	'name':None
 }
-
-def db_config(name):
-	global _db
-	_db['name'] = name
-
-
-
 
 
 class Database(object):
 
-	def __init__(self,db):
-		self.db = db
+	# instance = None
+
+	# def __new__(*args,**kwargs):
+	# 	if cls.instance in None:
+	# 		cls.instance = super().__new__(*args,**kwargs)
+	# 	return cls.instance
+
+	def __init__(self,db = None):
+		self.db = db or db_config
 		self.connect = None
 		self.cursor = None
+		self.connector = sqlite3.connect
 
 	def __enter__(self):
-		self.connect = sqlite3.connect(self.db)
+		self.connect = self.connector(self.db['name'])
 		self.cursor = self.connect.cursor()
 		return self.cursor
 
@@ -33,6 +36,8 @@ class Database(object):
 			self.connect.commit()
 		self.connect.close()
 
+
+### Exception ###
 
 class RecordNotExistsError(Exception):
 	pass
@@ -44,10 +49,8 @@ class MultiRecordError(Exception):
 
 
 
-
 class Utils(object):
 
-	#dump_dict
 	@staticmethod
 	def dumps_dict(**kwargs):
 		result = []
@@ -81,45 +84,109 @@ class Utils(object):
 		return result
 
 
-class Select(object):
+class Query(object):
 
-	def __init__(self,table,fields=None,**kwargs):
-		self.table = table
+	def __init__(self,model,fields=None,**kwargs):
+		self.model = model
+		self.table = model.__table__
 		self.fields = fields or []
 		self.where = kwargs.get('where',None)
-		self.alias = kwargs.get('alias',None)
+		self.alias = kwargs.get('alias',{})
 		self.distinct = kwargs.get('distinct',False)
-		self.orderby = kwargs.get('orderby',None)
+		self.orderby = kwargs.get('orderby',[])
 		self.limit = kwargs.get('limit',None)
 		self.sql = ''
+		self.cache = None
+		self.result = []
 
 	def as_sql(self):
 		sql = ['SELECT']
 		if self.distinct:
 			sql.append("DISTINCT")
-		fields = self.fields.copy()
 		if self.alias:
 			alias = ("%s AS %s " % (k,v) for k,v in self.alias.items())
-			fields.extend(alias)
-		sql.append(', '.join(fields))
+			self.fields.extend(alias)
+		sql.append(', '.join(self.fields))
 		sql.append('FROM')
 		sql.append(self.table)
 		if self.where:
 			sql.append("WHERE %s" % self.where)
 		if self.orderby:
-			sql.append(', '.join(self.orderby))
+			sql.append("ORDER BY %s" % ', '.join(self.orderby))
 		if self.limit:
 			if isinstance(self.limit,slice):
 				start = self.limit.start or 0
 				length = self.limit.stop
 				sql.append("LIMIT %s OFFSET %s" % (length,start))
 			elif isinstance(self.limit,int):
-				sql.append("LIMIT %s" % self.limit)
+				sql.append("LIMIT 1 OFFSET %s" % self.limit)
 		self.sql = ' '.join(sql) + ';'
 		return self.sql
 
+	def execute(self,sql = None):
+		sql = sql or self.as_sql()
+		print(sql)
+		with Database() as conn:
+			conn.execute(sql)
+			self.cache = conn.fetchall()
+		self._make_objects()
+		return self.result
+
+	def _make_objects(self):
+		attrs = {}
+		self.result = []
+		for values in self.cache:
+			for attr,value in zip(self.fields,values):
+				attrs[attr] = value
+				self.result.append(self.model(**attrs))
+		return self.result
+
+	def __getitem__(self,value):
+		if self.cache:
+			return list(self.result)[value]
+		if isinstance(value,str):
+			raise TypeError('Query object must be integers or slices, not str')
+		self.limit = value
+		self.execute()
+		if isinstance(value,int):
+			return self.result[0]
+		return self.result[value]
+
+	def __or__(self,other):
+		if self.where:
+			self.where = self.where + " AND " + other.where
+		else:
+			self.where = other.where
+		return self
+
+	def __and__(self,other):
+		if self.where:
+			self.where = self.where + " OR " + other.where
+		else:
+			self.where = other.where
+		return self
+
 	def __str__(self):
-		return self.sql or self.as_sql()
+		if self.cache is None:
+			self.execute()
+		return str(self.result)
+
+	def count(self):
+		if self.cache is None:
+			self.execute()
+		return len(self.cache)
+
+	def order_by(self,*fields):
+		self.orderby.extend(fields)
+		return self
+
+	def values(self,*fields):
+		self.fields = fields
+		self.execute()
+		return self.cache
+
+	def exclude(self,**query):
+		pass
 
 
 class Insert():
@@ -175,29 +242,21 @@ class Delete():
 
 
 
-class Query(object):
+class Converter(object):
 
 	db = Database
 
-	def __init__(self,model):
+	def __init__(self,model,instance = None):
 		self.model = model
 		self.table = model.__table__
+		self._instance = instance
 		self.fields = []
 		for k,v in model.__mapping__.items():
 			self.fields.append(k)
 
-	def make_objects(self,datas):
-		attrs = dict()
-		result = []
-		for data in datas:
-			for field,value in zip(self.fields,data):
-				attrs[field] = value
-			result.append(self.model(**attrs))
-		return result
-			
-	
+
 	def get(self,**query):		
-		condition = Utils.sql_dict(**query)
+		condition = Utils.dumps_dict(**query)
 		sql = "SELECT %s FROM %s WHERE %s;" % (','.join(self.fields),self.table,condition)
 		print(sql)
 		with self.db(_db['name']) as db:
@@ -212,7 +271,9 @@ class Query(object):
 			attrs[field] = value
 		return self.model(**attrs)
 
-	def save(self,instance):
+	def save(self):
+		if self._instance is None:
+			raise AttributeError('Missing %s object instance' % self.model)
 		value = []
 		for field in self.fields:
 			value.append(getattr(instance,field))
@@ -224,29 +285,20 @@ class Query(object):
 		return data
 
 	def all(self):
-		sql = "SELECT %s FROM %s;" % (','.join(self.fields),self.table)
-		print(sql)
-		with self.db(_db['name']) as db:
-			db.execute(sql)
-			datas = db.fetchall()
-		attrs = dict()
-		result = []
-		for data in datas:
-			for field,value in zip(self.fields,data):
-				attrs[field] = value
-			result.append(self.model(**attrs))
-		return result
-
-	def delete(self,instance):
-		pass
+		query = Query(self.model,fields=self.fields)
+		return query
 
 
-	def update(self,fields,condition):
-		pass
 
-	def filter(self,**query):
-		pass
-		
+class ConverterDescriptor(object):
+
+	def __init__(self,model):
+		self.converter = Converter(model)
+
+	def __get__(self,instance,onwer):
+		if instance is not None:
+			return Converter(model,instance)
+		return self.converter
 
 
 
@@ -333,7 +385,7 @@ class ModelMetaClass(type):
 		attrs['__mapping__'] = mapping
 		attrs['__table__'] = name
 		instance = type.__new__(cls,name,bases,attrs)
-		instance.object = Query(instance)
+		instance.object = ConverterDescriptor(instance)
 		return instance
 
 
@@ -343,6 +395,14 @@ class Model(object,metaclass=ModelMetaClass):
 		for k,v in kwargs.items():
 			setattr(self,k,v)
 
+	def __str__(self):
+		attrs = []
+		for attr,value in self.__dict__.items():
+			attrs.append('%s:%s' % (attr,value))
+		attrs = ','.join(attrs)
+		if len(attrs) > 20:
+			attrs = attrs[:20] + '...'
+		return "<%s: %s>" % (self.__class__.__name__,attrs)
 
 
 
