@@ -138,28 +138,55 @@ class Query(object):
 		for values in self.cache:
 			for attr,value in zip(self.fields,values):
 				attrs[attr] = value
-				self.result.append(self.model(**attrs))
+			self.result.append(self.model(**attrs))
 		return self.result
 
+	def copy(self):
+		new = self.__class__(self.model,self.fields)
+		new.where = self.where
+		new.alias = self.alias.copy()
+		new.distinct = self.distinct
+		new.orderby = self.orderby[:]
+		new.limit = self.limit
+		return new
+
 	def __getitem__(self,value):
+		if not isinstance(value,(slice,int)):
+			raise TypeError("Query object must be integers or slices")
 		if self.cache:
 			return list(self.result)[value]
-		if isinstance(value,str):
-			raise TypeError('Query object must be integers or slices, not str')
-		self.limit = value
-		self.execute()
+		new = self.copy()
+		new.limit = value
+		new.execute()
 		if isinstance(value,int):
-			return self.result[0]
-		return self.result[value]
+			return new.result[0] if new.result else []
+		return new.result[value]
+
+	def __bool__(self):
+		if self.cache is None:	
+			self.execute()
+		return bool(self.cache)
+
+	def __iter__(self):
+		if self.cache is None:
+			self.execute()
+		return iter(self.result)
+
+	def __len__(self):
+		if self.cache is None:
+			self.execute()
+		return len(self.result)
 
 	def __or__(self,other):
-		if self.where:
-			self.where = self.where + " AND " + other.where
+		new = self.copy()
+		if new.where:
+			new.where = new.where + " AND " + other.where
 		else:
-			self.where = other.where
-		return self
+			new.where = other.where
+		return new
 
 	def __and__(self,other):
+		new = self.copy()
 		if self.where:
 			self.where = self.where + " OR " + other.where
 		else:
@@ -169,7 +196,7 @@ class Query(object):
 	def __str__(self):
 		if self.cache is None:
 			self.execute()
-		return str(self.result)
+		return "<Query: %r>" % self.result
 
 	def count(self):
 		if self.cache is None:
@@ -177,13 +204,15 @@ class Query(object):
 		return len(self.cache)
 
 	def order_by(self,*fields):
-		self.orderby.extend(fields)
-		return self
+		new = self.copy()
+		new.orderby.extend(fields)
+		return new
 
 	def values(self,*fields):
-		self.fields = fields
-		self.execute()
-		return self.cache
+		new = self.copy()
+		new.fields = fields
+		new.execute()
+		return new.cache
 
 	def exclude(self,**query):
 		pass
@@ -287,6 +316,12 @@ class Converter(object):
 	def all(self):
 		query = Query(self.model,fields=self.fields)
 		return query
+
+	def query(self,**q):
+		pass
+
+	def update(self):
+		pass
 
 
 
@@ -395,14 +430,20 @@ class Model(object,metaclass=ModelMetaClass):
 		for k,v in kwargs.items():
 			setattr(self,k,v)
 
-	def __str__(self):
+	def __repr__(self):
 		attrs = []
-		for attr,value in self.__dict__.items():
-			attrs.append('%s:%s' % (attr,value))
-		attrs = ','.join(attrs)
-		if len(attrs) > 20:
-			attrs = attrs[:20] + '...'
-		return "<%s: %s>" % (self.__class__.__name__,attrs)
+		for k,v in self.__dict__.items():
+			v = "%r" % v
+			if len(v) > 20:
+				v = v[:20] + '...'
+			attrs.append('%s:%s' % (k,v))
+		if len(attrs) > 6:
+			attrs = attrs[:6]
+			attrs[-1] = '...'
+		return "<%s: %s>" % (self.__class__.__name__,','.join(attrs))
+
+	def __str__(self):
+		return "%s object" % self.__class__.__name__
 
 
 

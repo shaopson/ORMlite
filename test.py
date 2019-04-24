@@ -17,6 +17,7 @@ class User(model.Model):
 	age = model.IntegerField('age')
 
 
+ 
 
 
 class Studen(model.Model):
@@ -25,7 +26,6 @@ class Studen(model.Model):
 	age = model.IntegerField('age',default='M',null=False)
 
 
-a = User.object.all()[0]
+a = User.object.all().order_by('age')
 print(a)
-print(dir(a))
 #model.migrate((Studen,),db) 
