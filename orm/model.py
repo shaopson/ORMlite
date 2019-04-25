@@ -196,7 +196,7 @@ class Query(object):
 	def __str__(self):
 		if self.cache is None:
 			self.execute()
-		return "<Query: %r>" % self.result
+		return "<Query %r>" % self.result
 
 	def count(self):
 		if self.cache is None:
@@ -301,6 +301,7 @@ class Converter(object):
 		return self.model(**attrs)
 
 	def save(self):
+		# insert or update
 		if self._instance is None:
 			raise AttributeError('Missing %s object instance' % self.model)
 		value = []
@@ -443,7 +444,7 @@ class Model(object,metaclass=ModelMetaClass):
 		return "<%s: %s>" % (self.__class__.__name__,','.join(attrs))
 
 	def __str__(self):
-		return "%s object" % self.__class__.__name__
+		return "<%s object>" % self.__class__.__name__
 
 
 
@@ -464,6 +465,78 @@ def migrate(model_list,db):
 			cur.execute(sql)
 		cur.close()
 		conn.commit()
+
+
+class ModelPickle(object):
+
+	@staticmethod
+	def to_dict(model):
+		import datetime
+		fields = model.__mapping__
+		result = {
+			'__table__':model.__table__,
+			'__data__':datetime.datetime.today()
+		}
+		for name,field in fields.items():
+			result.update({
+				name:field.__dict__
+			})
+		return result
+		
+	@staticmethod
+	def diff_dict(dict1,dict2):
+		"""
+		对比2个字典，包含增加，删除，修改的key-value项;
+		modify的结果为包含（原值,新值）的元组
+		2个字典参数调换顺序将产生不同的结果
+		"""
+		add = {}
+		delete = {}
+		modify = {}
+		for key in dict1.keys() | dict2.keys():
+			try:
+				value1 = dict1[key]
+			except KeyError:
+				add[key] = dict2[key]
+				continue
+			try:
+				value2 = dict2[key]
+			except KeyError:
+				delete[key] = dict1[key]
+				continue
+			if value1 != value2:
+				if diff_dict(value1,dict) and isinstance(value2,dict):
+					modify[key] = (value1,value2)
+					continue
+				modify[key] = (dict1[key],dict2[key])
+		return {
+			'add':add,
+			'delete':delete,
+			'modify':modify,
+		}
+
+
+
+if __name__ == "__main__":
+	
+	import json
+	class User(Model):
+		id = PrimaryKey('id')
+		name = CharField('name',max_length=50)
+		sex = CharField('sex',max_length=20)
+		age = IntegerField('age')
+
+	d = ModelPickle.to_dict(User)
+	print(d)
+	r = ModelPickle.diff_dict(d,d)
+	print(r)
+
+
+
+
+
+
+
 		
 
 

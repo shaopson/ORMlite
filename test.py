@@ -27,5 +27,6 @@ class Studen(model.Model):
 
 
 a = User.object.all().order_by('age')
+for x in a:
+	print(x)
 print(a)
-#model.migrate((Studen,),db) 
