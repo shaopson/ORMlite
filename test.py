@@ -1,32 +1,44 @@
-import os
-from orm import model
-
+import os,sys
+from ormlite import model,fields,creation
+from ormlite.model import Count,Min,Sum
+import ormlite
 
 db = os.path.join(os.getcwd(),'db.sqlite3')
-model.db_config['name'] = db
-
-DATADABE = {
-	"name":db
-}
+ormlite.Database.config(db)
 
 
 class User(model.Model):
-	id = model.PrimaryKey('id')
-	name = model.CharField('name',max_length=50)
-	sex = model.CharField('sex',max_length=20)
-	age = model.IntegerField('age')
-
-
- 
+	id = fields.PrimaryKey()
+	name = fields.CharField(length=50)
+	sex = fields.CharField(length=20)
+	age = fields.IntegerField()
 
 
 class Studen(model.Model):
-	name = model.CharField('name',max_length=50,unique=True)
-	sex = model.CharField('sex',max_length=20)
-	age = model.IntegerField('age',default='M',null=False)
+	name = fields.CharField(length=50,unique=True)
+	sex = fields.CharField(length=20)
+	age = fields.IntegerField(default='M',null=False)
 
 
-a = User.object.all().order_by('age')
-for x in a:
-	print(x)
-print(a)
+class Log(model.Model):
+	id = fields.PrimaryKey()
+	user = fields.ForeignKey("User")
+	desc = fields.CharField()
+
+
+# u = User.object.get(id=5)
+# log = Log.object.get(id=2)
+# print(log)
+# print(log.user)
+# log.user = u
+# print(log.user)
+#print(log.test)
+#creation.create_table([Log],db)
+# r = User.object.all()
+# print(r)
+
+#save()
+#all()
+#[0] [1:2]       
+
+
