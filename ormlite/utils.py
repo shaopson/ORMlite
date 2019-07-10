@@ -2,25 +2,33 @@ from datetime import datetime,time,date
 from ormlite import model
 from ormlite import fields
 
-def _format(value):
-	if isinstance(value,str):
-		return repr(value)
+
+def as_sql(field,vlues):
+	field = '"%s"' % field
+	if value == None:
+		value = "NULL"
 	if isinstance(value,datetime):
 		value = value.strftime('%Y-%m-%d %H:%M:%S')
-		return repr(value)
+	return field,value
+
+
+
+def _format(value):
+	# if isinstance(value,str):
+	# 	return repr(value)
+	if isinstance(value,datetime):
+	 	return value.strftime('%Y-%m-%d %H:%M:%S')
 	if isinstance(value,(date,time)):
-		value = value.isoformat()
-		return repr(value)
+		return value.isoformat()
 	if isinstance(value,slice):
-		return str(value.start),str(value.stop)
-	if isinstance(value,(set,list)):
-		value = map(_format,value)
-		return "(%s)" % ','.join(value)
+		return (value.start,value.stop)
+	if isinstance(value,list):
+		return tuple(value)
 	if isinstance(value,model.Model):
 		return value.id
-	if value == None:
+	if value is None:
 		return 'NULL'
-	return str(value)
+	return value
 
 
 def _condition(**kwargs):
@@ -38,6 +46,23 @@ def _condition(**kwargs):
 			condition = "= %s" % value
 		query.append("%s %s" % (name,condition))
 	return " AND ".join(query)
+
+
+def convert(**kwargs):
+	conditions = []
+	for key,value in kwargs.items():
+		value = _format(value)
+		if key.find("__") > 0:
+			name,op = key.split("__")
+			func = fields.operators.get(op)
+			if not func:
+				raise ValueError()
+			cons = func(name,value)
+		else:
+			cons = '"%s" = %s' % (key,value)
+		conditions.append(cons)
+	return conditions
+
 
 
 class ModelPickle(object):

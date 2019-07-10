@@ -1,28 +1,14 @@
+import sqlite3
+import datetime as dt
 
+conn = sqlite3.connect(":memory:")
+conn.execute("""
+	CREATE TABLE test (name VARChar(50),dt DATETIME);
+	""")
+conn.execute("INSERT INTO test (name,dt) VALUES (?,?)",['name',dt.datetime.today()])
+conn.execute("INSERT INTO test (name,dt) VALUES (?,?)",['shao',dt.datetime.today()])
+conn.execute("INSERT INTO test (name,dt) VALUES (?,?)",['wen',dt.datetime.today()])
+conn.execute("INSERT INTO test (name,dt) VALUES (?,?)",['ling',dt.datetime.today()])
+result = conn.execute("select * from test where dt > '2019-01-01' ;")
+print(result.fetchall())
 
-class Dec():
-	def __init__(self,name):
-		self.name = name
-
-
-	def __get__(self,obj,cls):
-		print('get')
-		return obj.__dict__[self.name]
-
-	def __set__(self,obj,value):
-		print('set')
-		obj.__dict__[self.name] = value
-
-	def __delete__(self,obj):
-		print('delete')
-		del obj.__dict__[self.name]
-
-class Test():
-	d = Dec('d')
-
-	def __init__(self,name):
-		self.d = name
-
-t = Test(22)
-t.d = 1
-print(t.d)

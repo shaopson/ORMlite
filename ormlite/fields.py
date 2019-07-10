@@ -1,5 +1,6 @@
 from ormlite.utils import _format
 
+
 class Mappings:
 	columns = {
 		"CharField":"varchar(%s)",
@@ -21,7 +22,7 @@ class Mappings:
 		"range":"BETWEEN %s AND %s",
 		"id":"= %s"
 	}
-
+	
 	@classmethod
 	def get_column(cls,field):
 		column = cls.columns.get(field.__class__.__name__,None)
@@ -33,13 +34,72 @@ class Mappings:
 		return column
 
 
+def __gt(column,value):
+	return '"%s" > %r' % (column,value)
+
+def __ge(column,value):
+	return '"%s" >= %r' % (column,value)
+
+def __lt(column,value):
+	return '"%s" < %r' % (column,value)
+
+def __le(column,value):
+	return '"%s" <= %r' % (column,value)
+
+def __not(column,value):
+	return '"%s" != %r' % (column,value)
+
+def __in(column,value):
+	return '"%s" IN %s' % (column,value)
+
+def __range(column,value):
+	data = [column]
+	for x in value:
+		data.append(x)
+	return '"%s" BETWEEN %s AND %s' % (tuple(data))
+
+def __id(column,value):
+	return '"%s" = %s' % (column,value)
+
+def __like(column,value):
+	return '"%s" LIKE \'%s\'' % (column,value)
+
+def __contains(column,value):
+	return '"%s" LINK \'%%%s%%\'' % (column,value)
+
+def __startswith(column,value):
+	return '"%s" LIKE \'%s%%\'' % (column,value)
+
+def __endswith(column,value):
+ 	return '"%s" LIKE \'%%%s\'' % (column,value)
+
+#__endswith = lambda x,y:'"%s" LIKE %%%s' % (x,y)
+
+
+operators = {
+	"gt":__gt,
+	"ge":__ge,
+	"lt":__lt,
+	"lt":__le,
+	"not":__not,
+	"in":__in,
+	"range":__range,
+	"id":__id,
+	"like":__like,
+	"contains":__contains,
+	"startswith":__startswith,
+	"endswith":__endswith
+}
+
+
 class Field(object):
 
-	def __init__(self,default=None,unique=False,null=True,check=None):
+	def __init__(self,default=None,unique=False,null=True,auto=None,check=None):
 		self.default = default
 		self.unique = unique
 		self.null = null
 		self.check = check
+		self.auto = auto
 		self.name = ''
 
 	def constraint(self):
@@ -54,6 +114,10 @@ class Field(object):
 			const.append("CHECK(%s)" % self.check)
 		return ' '.join(const)
 
+	def run_auto(self,value = None):
+		if self.auto:
+			return self.auto(value)
+
 	def __str__(self):
 		return self.__class__.__name__
 
@@ -66,6 +130,9 @@ class CharField(Field):
 	def __init__(self,length=100,*args,**kwargs):
 		super().__init__(*args,**kwargs)
 		self.length = length
+
+	def format(self,value):
+		pass
 
 
 class TextField(Field):
@@ -81,7 +148,9 @@ class DateTimeField(Field):
 
 
 class DateField(Field):
-	pass
+
+	def __sql__(self):
+		return ""
 
 
 class PrimaryKey(Field):
@@ -130,13 +199,5 @@ class ForeignKey(Field,RelatedMix):
 	
 
 
-
-
-
-
-
-
-
-# Foreign Key (name) REFERENCES table(name);
 
 
