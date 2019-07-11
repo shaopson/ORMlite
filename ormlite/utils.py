@@ -48,20 +48,28 @@ def _condition(**kwargs):
 	return " AND ".join(query)
 
 
-def convert(**kwargs):
-	conditions = []
-	for key,value in kwargs.items():
-		value = _format(value)
+def convert(dics,model=None):
+	buf = []
+	for key,value in dics.items():
 		if key.find("__") > 0:
 			name,op = key.split("__")
+			if model:
+				field = model.__mapping__.get(name)
+				if field:
+					value = field.convert(value)
 			func = fields.operators.get(op)
 			if not func:
-				raise ValueError()
-			cons = func(name,value)
+				raise ValueError("Not support operator:%s" % key)
+			condition = func(name,value)
 		else:
-			cons = '"%s" = %s' % (key,value)
-		conditions.append(cons)
-	return conditions
+			name = key
+			if model:
+				field = model.__mapping__.get(name)
+				if field:
+					value = field.convert(value)
+			condition = '"%s" = %s' % (name,value)
+		buf.append(condition)
+	return buf
 
 
 

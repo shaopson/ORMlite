@@ -118,6 +118,14 @@ class Field(object):
 		if self.auto:
 			return self.auto(value)
 
+	def convert(self,value):
+		if value is None:
+			return "NULL"
+		return value
+
+	def restore(self,value):
+		return value
+
 	def __str__(self):
 		return self.__class__.__name__
 
@@ -131,26 +139,58 @@ class CharField(Field):
 		super().__init__(*args,**kwargs)
 		self.length = length
 
-	def format(self,value):
-		pass
+	def convert(self,value):
+		return "'%s'" % value
+
 
 
 class TextField(Field):
-	pass
+	
+	def convert(self,value):
+		return "'%s'" % value
 
 
 class IntegerField(Field):
-	pass
+	
+	def convert(self,value):
+		if not isinstance(value,int):
+			raise ValueError("<%s:%s> value requires int type" % (self.__class__.__name__,self.name))
+		return value
 
 
 class DateTimeField(Field):
-	pass
+
+	
+	def restore(self,value):
+		from datetime import datetime
+		if isinstance(value,str):
+			value = value.strip()
+			if value.find("."):
+				return datetime.strptime(value,"%Y-%m-%d %H:%M:%S.%f")
+			return datetime.strptime(value,"%Y-%m-%d %H:%M:%S")
+		return value
 
 
 class DateField(Field):
 
-	def __sql__(self):
-		return ""
+	def restore(self,value):
+		from datetime import datetime
+		if isinstance(value,str):
+			value = value.strip()
+			return datetime.strptime(value,"%Y-%m-%d")
+		return value
+
+
+class TimeField(Field):
+
+	def restore(self,value):
+		from datetime import datetime
+		if isinstance(value,str):
+			value = value.strip()
+			if value.find("."):
+				return datetime.strptime(value,"%H:%M:%S.%f")
+			return datetime.strptime(value,"%H:%M:%S")
+		return value
 
 
 class PrimaryKey(Field):

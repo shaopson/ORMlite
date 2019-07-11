@@ -54,10 +54,10 @@ class Database(object):
 
 class Where(object):
 
-	def __init__(self,where=None):
+	def __init__(self,condition=None):
 		self.buf = []
-		if where is not None:
-			self.buf.append(where)
+		if condition is not None:
+			self.buf.append(condition)
 
 	def __or__(self,where):
 		new = self.copy()
@@ -70,7 +70,6 @@ class Where(object):
 		elif where:
 			new = where.copy()
 		return new
-
 
 	def __and__(self,where):
 		new = self.copy()
@@ -113,17 +112,17 @@ class Where(object):
 			self.buf.insert(0,"(")
 			self.buf.append(")")
 
-	def as_sql(self):
+	def condition(self,model=None):
 		where = []
 		for node in self.buf:
 			if isinstance(node,self.__class__):
-				where.append(node.as_sql())
+				where.append(node.condition())
 			elif isinstance(node,dict):
-				conditions = convert(**node)
-				w = " AND ".join(conditions)
-				if len(conditions) > 1:
-					w = "(%s)" % w
-				where.append(w)
+				cons = convert(node,model)
+				condition = " AND ".join(cons)
+				if len(cons) > 1:
+					condition = "(%s)" % condition
+				where.append(condition)
 			else:
 				where.append(node)
 		return "".join(where)
@@ -135,39 +134,48 @@ class Compile(object):
 	def __init__(self,model):
 		self.model = model
 
-	def update(self,obj=None,where=None,frag=True,**columns):
+	def update(self,obj=None,where=None,columns=None,frag=True):
 		"""
-		obj: Model instance
-		columns dict:{field:value}
+		obj: Model实例 更新的对象
+		columns: dict类型 更新的字段和值
+		where: Where实例 更新的条件
+		frag: 是否将值和sql语句分离，为True时，用占位符代替值，最终返回sql,values； 
+		如果有obj参数和columns参数,只更新obj对象的对应columns字段的值；
+		如果没有obj参数，将更新所有行的columns对应字段的值；
+		如果有obj参数没有columns参数，则更新obj对象的所有字段的值；
+		UPDATE [table] SET [field = value, ...] WHERE [condition];
 		"""
 		buf = ['UPDATE "%s" SET' % self.model.__table__]
+
 		if not obj and not columns:
 			raise ValueError("obj and columns can not both be None")
 		if obj:
 			if obj.pk is None:
 				raise ValueError("Object <%s> id is invalid" % obj)
 			if where:
-				where += 'AND "id" = %s' % obj.id
+				where &= Where({"id":obj.id})
 			else:
-				where = '"id" = %s' % obj.id
+				where = Where({"id":obj.id})
 			if not columns: 
 				columns = {}
 				for field in obj.__mapping__.keys():
-					#如果是关系对象或有时间对象需要自动更新时间 待处理
+					#如果是关系对象或有时间对象需要自动更新时间 [待处理]
 					columns[field] = getattr(obj,field)
-
 		fields = []
 		values = []
-		for k,v in columns.items():
+		for key,value in columns.items():
 			if frag:
-				fields.append('"%s" = ?' % k)
-				values.append(v)
+				fields.append('"%s" = ?' % key)
+				values.append(value)
 			else:
-				date.append('"%s" = %s' % (k,_format(v)))
+				field = obj.__mapping__.get(key)
+				if field:
+					value = field.convert(value)
+				date.append('"%s" = %s' % (key,value))
 		buf.append(','.join(fields))
 		if where:
 			buf.append("WHERE")
-			buf.append(where)
+			buf.append(where.condition(self.model))
 		buf.append(";")
 		sql = " ".join(buf)
 		if frag:
@@ -175,7 +183,10 @@ class Compile(object):
 		return sql
 
 	def insert(self,obj,frag=True):
-		# INSERT OR REPLACE INTO %s (%s) VALUES (%s);
+		"""
+		INSERT INTO [table] ([field, ...]) VALUES ([value, ...]);
+		INSERT OR REPLACE INTO
+		"""
 		table = self.model.__table__
 		fields = []
 		values = []
@@ -188,13 +199,15 @@ class Compile(object):
 			if field.auto:
 				value = field.auto(value)
 			if not frag:
-				value = _format(value)
+				value = field.convert(value)
 			values.append(value)
 		if frag:
 			values_ph = "?" * len(fields)
 			sql = 'INSERT INTO "%s" (%s) VALUES (%s);' % (table,",".join(fields),",".join(values_ph))
+			print(sql,values)
 			return sql,values
 		sql = 'INSERT INTO "%s" (%s) VALUES (%s);' % (table,",".join(fields),",".join(values))
+		print(sql)
 		return sql
 
 	def delete(self,obj=None,where=None):
@@ -245,11 +258,11 @@ class Compile(object):
 
 class Query(object):
 
-	def __init__(self,model,fields=None,**kwargs):
+	def __init__(self,model,fields=None,where=None,**kwargs):
 		self.model = model
 		self.table = model.__table__
 		self.fields = fields or []
-		self.where = kwargs.get('where',Where())
+		self.where = where or Where()
 		self.alias = kwargs.get('alias',{})
 		self.distinct = kwargs.get('distinct',False)
 		self.orderby = kwargs.get('orderby',[])
@@ -273,8 +286,7 @@ class Query(object):
 		sql.append(', '.join(fields))
 		sql.append('FROM "%s"' % self.table)
 		if self.where:
-			print(self.where.as_sql())
-			sql.append("WHERE %s" % self.where.as_sql())
+			sql.append("WHERE %s" % self.where.as_sql(self.model))
 		if self.groupby:
 			sql.append("GROUP BY %s" % ','.join(('"%s"' % f for f in self.groupby)))
 		if self.orderby:
@@ -288,12 +300,6 @@ class Query(object):
 				sql.append("LIMIT 1 OFFSET %s" % self.limit)
 		self.sql = ' '.join(sql) + ';'
 		return self.sql
-
-	def eval(self,sql,function=None):
-		with Database() as db:
-			db.execute(sql)
-			result = db.fetchall()
-		return function(result) if function else result
 
 	def execute(self):
 		sql = self.as_sql()
@@ -354,21 +360,6 @@ class Query(object):
 		if self.result is None:
 			self.execute()
 		return len(self.result)
-
-	def __or__(self,other):
-		new = self.copy()
-		new.where |= other.where
-		return new
-
-	def __and__(self,other):
-		new = self.copy()
-		new.where &= other.where
-		return new
-
-	def __invert__(self):
-		new = self.copy()
-		new.where = ~self.where
-		return new
 
 	def __str__(self):
 		if self.result is None:
@@ -474,7 +465,6 @@ class Accessor(object):
 		compile = Compile(model=self.model)
 		if self._instance.pk is None:
 			sql,values = compile.insert(obj=self._instance,frag=True)
-			print(sql,values)
 			with Database() as db:
 				db.execute(sql,values)
 				db.execute("SELECT last_insert_rowid();")
