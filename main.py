@@ -3,8 +3,12 @@
 
 
 
-def f(model=None,**kw):
-	print(kw)
-	print(model)
+class C():
 
-f(**{"a":1,"b":2},model='dfdf')
+	def __reduce__(self,other):
+		print("__reduce__")
+
+	def __add__(self,other):
+		print("__add__")
+
+c = C()

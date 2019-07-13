@@ -112,34 +112,41 @@ class Where(object):
 			self.buf.insert(0,"(")
 			self.buf.append(")")
 
-	def condition(self,model=None):
-		where = []
-		for node in self.buf:
-			if isinstance(node,self.__class__):
-				where.append(node.condition())
-			elif isinstance(node,dict):
-				cons = convert(node,model)
-				condition = " AND ".join(cons)
-				if len(cons) > 1:
-					condition = "(%s)" % condition
-				where.append(condition)
+	def as_sql(self):
+		sql = []
+		params = []
+		for data in self.buf:
+			if isinstance(data,self.__class__):
+				_sql,_params = data.as_sql()
+				sql.append(_sql)
+				params.extend(_params)
+			elif isinstance(data,dict):
+				data = convert(data)
+				_sql = []
+				_params = []
+				for key,value in data.items():
+					_sql.append(key)
+					_params.extend(value)
+				if len(_sql) > 1:
+					sql.append("(%s)" % " AND ".join(_sql))
+				else:
+					sql.append(" AND ".join(_sql))
+				params.extend(_params)
 			else:
-				where.append(node)
-		return "".join(where)
+				sql.append(data)
+		return "".join(sql),tuple(params)
 
 
-
-class Compile(object):
+class Compiler(object):
 
 	def __init__(self,model):
 		self.model = model
 
-	def update(self,obj=None,where=None,columns=None,frag=True):
+	def update(self,instance=None,where=None,columns=None):
 		"""
-		obj: Model实例 更新的对象
+		instance: Model实例 更新的对象
 		columns: dict类型 更新的字段和值
 		where: Where实例 更新的条件
-		frag: 是否将值和sql语句分离，为True时，用占位符代替值，最终返回sql,values； 
 		如果有obj参数和columns参数,只更新obj对象的对应columns字段的值；
 		如果没有obj参数，将更新所有行的columns对应字段的值；
 		如果有obj参数没有columns参数，则更新obj对象的所有字段的值；
@@ -147,40 +154,34 @@ class Compile(object):
 		"""
 		buf = ['UPDATE "%s" SET' % self.model.__table__]
 
-		if not obj and not columns:
-			raise ValueError("obj and columns can not both be None")
-		if obj:
-			if obj.pk is None:
-				raise ValueError("Object <%s> id is invalid" % obj)
+		if not instance and not columns:
+			raise ValueError("instance and columns can not both be None")
+		if instance:
+			if not instance.pk:
+				raise ValueError("Object <%s> id is invalid" % instance)
 			if where:
-				where &= Where({"id":obj.id})
+				where &= Where({"id":instance.pk})
 			else:
-				where = Where({"id":obj.id})
+				where = Where({"id":instance.pk})
 			if not columns: 
 				columns = {}
-				for field in obj.__mapping__.keys():
+				for field_name in instance.__mapping__.keys():
 					#如果是关系对象或有时间对象需要自动更新时间 [待处理]
-					columns[field] = getattr(obj,field)
+					columns[field_name] = getattr(instance,field_name)
 		fields = []
 		values = []
-		for key,value in columns.items():
-			if frag:
-				fields.append('"%s" = ?' % key)
-				values.append(value)
-			else:
-				field = obj.__mapping__.get(key)
-				if field:
-					value = field.convert(value)
-				date.append('"%s" = %s' % (key,value))
+		for field_name,value in columns.items():
+			fields.append(self.get_expression(field_name))
+			values.append(value)
 		buf.append(','.join(fields))
 		if where:
 			buf.append("WHERE")
-			buf.append(where.condition(self.model))
+			_sql,_params = where.as_sql()
+			buf.append(_sql)
+			values.extend(_params)
 		buf.append(";")
 		sql = " ".join(buf)
-		if frag:
-			return sql,values
-		return sql
+		return sql,tuple(values)
 
 	def insert(self,obj,frag=True):
 		"""
@@ -254,6 +255,10 @@ class Compile(object):
 	def create(self):
 		pass
 
+	@staticmethod
+	def get_expression(field_name):
+		return '"%s" = ?' % field_name
+
 
 
 class Query(object):
@@ -268,13 +273,13 @@ class Query(object):
 		self.orderby = kwargs.get('orderby',[])
 		self.groupby = kwargs.get('groupby',[])
 		self.limit = kwargs.get('limit',None)
-		self.sql = ''
 		self.function = None
 		self.cache = None
 		self.result = None
 
 	def as_sql(self):
 		sql = ['SELECT']
+		params = []
 		if self.distinct:
 			sql.append("DISTINCT")
 	#	fields = self.fields[:]
@@ -286,7 +291,10 @@ class Query(object):
 		sql.append(', '.join(fields))
 		sql.append('FROM "%s"' % self.table)
 		if self.where:
-			sql.append("WHERE %s" % self.where.as_sql(self.model))
+			sql.append("WHERE")
+			_sql,_params = self.where.as_sql()
+			sql.append(_sql)
+			params.extend(_params)
 		if self.groupby:
 			sql.append("GROUP BY %s" % ','.join(('"%s"' % f for f in self.groupby)))
 		if self.orderby:
@@ -298,14 +306,15 @@ class Query(object):
 				sql.append("LIMIT %s OFFSET %s" % (length,start))
 			elif isinstance(self.limit,int):
 				sql.append("LIMIT 1 OFFSET %s" % self.limit)
-		self.sql = ' '.join(sql) + ';'
-		return self.sql
+		sql.append(";")
+		sql = ' '.join(sql)
+		return sql,tuple(params)
 
 	def execute(self):
-		sql = self.as_sql()
-		print(sql)
+		sql,params = self.as_sql()
+		print(sql,params)
 		with Database() as db:
-			db.execute(sql)
+			db.execute(sql,params)
 			self.cache = db.fetchall()
 		if self.function:
 			#根据需要原始处理数据
@@ -441,6 +450,9 @@ class Query(object):
 		new.execute()
 		return new.result
 
+	def update(self):
+		pass
+
 	def extra(self,**kwargs):
 		pass
 
@@ -462,7 +474,7 @@ class Accessor(object):
 	def save(self):
 		if self._instance is None:
 			raise ValueError("%s Accessor requires parameter:instance" % self.model)
-		compile = Compile(model=self.model)
+		compile = Compiler(model=self.model)
 		if self._instance.pk is None:
 			sql,values = compile.insert(obj=self._instance,frag=True)
 			with Database() as db:
@@ -471,9 +483,10 @@ class Accessor(object):
 				id = db.fetchone()[0]
 				self._instance.id = id
 		else:
-			sql,values = compile.update(obj=self._instance)
+			sql,params = compile.update(instance=self._instance)
+			print(sql,params)
 			with Database() as db:
-				db.execute(sql,values)
+				db.execute(sql,params)
 
 	def all(self):
 		query = Query(self.model,fields=self.fields)
@@ -486,7 +499,7 @@ class Accessor(object):
 		if self._instance and self._instance.pk is None:
 			raise ValueError("object %s id is valied")
 		compile = Compile(self.model)
-		sql,values = compile.update(obj=self._instance,**columns)
+		sql,values = compile.update(obj=self._instance,columns=columns)
 		print(sql,values)
 		with Database() as db:
 			db.execute(sql,values)
@@ -634,6 +647,7 @@ class Model(object,metaclass=ModelMetaClass):
 		columns = {}
 		for field in fields:
 			columns[field] = getattr(self,field)
+		print(columns)
 		self.object.update(**columns)
 
 	def delete(self):

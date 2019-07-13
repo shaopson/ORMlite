@@ -31,16 +31,16 @@ def _format(value):
 	return value
 
 
-def _condition(**kwargs):
-	query = []
-	for k,v in kwargs.items():
-		value = _format(v)
-		if k.find("__") > 0:
-			name,op = k.split("__")
-			symbol = fields.Mappings.operates.get(op)
-			if not symbol:
-				raise ValueError("Not support query condition:%s" % k)
-			condition = symbol % value
+def _condition(conditions):
+	sql = []
+	params = []
+	for condition,value in conditions.items():
+		if condition.find("__") > 0:
+			field_name,op = condition.split("__")
+			op_func = fields.operators.get(op)
+			if not op_func:
+				raise ValueError("Not support query condition:%s" % condition)
+			
 		else:
 			name = k
 			condition = "= %s" % value
@@ -48,28 +48,20 @@ def _condition(**kwargs):
 	return " AND ".join(query)
 
 
-def convert(dics,model=None):
-	buf = []
-	for key,value in dics.items():
+def convert(conditions):
+	result = {}
+	for key,value in conditions.items():
 		if key.find("__") > 0:
-			name,op = key.split("__")
-			if model:
-				field = model.__mapping__.get(name)
-				if field:
-					value = field.convert(value)
+			field_name,op = key.split("__")
 			func = fields.operators.get(op)
 			if not func:
 				raise ValueError("Not support operator:%s" % key)
-			condition = func(name,value)
+			condition,params = func(field_name,value)
 		else:
-			name = key
-			if model:
-				field = model.__mapping__.get(name)
-				if field:
-					value = field.convert(value)
-			condition = '"%s" = %s' % (name,value)
-		buf.append(condition)
-	return buf
+			condition = '"%s" = ?' % key
+			params = (value,)
+		result[condition] = params	
+	return result
 
 
 

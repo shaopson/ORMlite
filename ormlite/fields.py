@@ -1,3 +1,5 @@
+from datetime import datetime,date
+
 from ormlite.utils import _format
 
 
@@ -35,45 +37,44 @@ class Mappings:
 
 
 def __gt(column,value):
-	return '"%s" > %r' % (column,value)
+	return '"%s" > ?' % column, (value,)
 
 def __ge(column,value):
-	return '"%s" >= %r' % (column,value)
+	return '"%s" >= ?' % column, (value,)
 
 def __lt(column,value):
-	return '"%s" < %r' % (column,value)
+	return '"%s" < ?' % column, (value,)
 
 def __le(column,value):
-	return '"%s" <= %r' % (column,value)
+	return '"%s" <= ?' % column, (value,)
 
 def __not(column,value):
-	return '"%s" != %r' % (column,value)
+	return '"%s" != ?' % column, (value,)
 
 def __in(column,value):
-	return '"%s" IN %s' % (column,value)
+	params = "?" * len(value)
+	return '"%s" IN (%s)' % (column,",".join(params)), tuple(value)
 
 def __range(column,value):
-	data = [column]
+	params = []
 	for x in value:
-		data.append(x)
-	return '"%s" BETWEEN %s AND %s' % (tuple(data))
+		params.append(x)
+	return '"%s" BETWEEN ? AND ?' % columns,(params.pop(0),params.pop())
 
 def __id(column,value):
-	return '"%s" = %s' % (column,value)
+	return '"%s" = ?' % column, (value,)
 
 def __like(column,value):
-	return '"%s" LIKE \'%s\'' % (column,value)
+	return '"%s" LIKE ?' % column, (value,)
 
 def __contains(column,value):
-	return '"%s" LINK \'%%%s%%\'' % (column,value)
+	return '"%s" LINK ?' % column, ("%%%s%%" % value,)
 
 def __startswith(column,value):
-	return '"%s" LIKE \'%s%%\'' % (column,value)
+	return '"%s" LIKE ?' % column, ("%s%%" % value,)
 
 def __endswith(column,value):
- 	return '"%s" LIKE \'%%%s\'' % (column,value)
-
-#__endswith = lambda x,y:'"%s" LIKE %%%s' % (x,y)
+ 	return '"%s" LIKE ?' % column, ("%%%s" % value,)
 
 
 operators = {
@@ -94,36 +95,58 @@ operators = {
 
 class Field(object):
 
-	def __init__(self,default=None,unique=False,null=True,auto=None,check=None):
+	def __init__(self,default=None,unique=False,null=True,init=None,check=None):
 		self.default = default
 		self.unique = unique
 		self.null = null
-		self.check = check
-		self.auto = auto
-		self.name = ''
+		self._name = None
+		if init is not None and not callable(init):
+			raise ValueError("init parameter is not a callable object:%s" % init)
+		else:
+			self.init = init
+		if check is not None and not callable(check):
+			raise ValueError("check parameter is not a callable object:%s" % check)
+		else:
+			self.check = check
 
 	def constraint(self):
-		const = []
-		if self.default:
-			const.append("DEFAULT %s" % _format(self.default))
+		sql = []
+		if self.default is not None:
+			sql.append("DEFAULT %s" % self.to_sql(self.default))
 		if self.unique:
-			const.append("UNIQUE")
+			sql.append("UNIQUE")
 		if not self.null:
-			const.append("NOT NULL")
-		if self.check:
-			const.append("CHECK(%s)" % self.check)
-		return ' '.join(const)
+			sql.append("NOT NULL")
+		return ' '.join(sql)
 
-	def run_auto(self,value = None):
-		if self.auto:
-			return self.auto(value)
+	@property
+	def default(self):
+		return self._default
+	
+	@default.setter
+	def default(self,value):
+		if callable(value):
+			self._default = value()
+		self._default = value
 
-	def convert(self,value):
+	@property
+	def name(self):
+		return self._name
+	
+	@name.setter
+	def name(self,value):
+		if not isinstance(value,str):
+			raise ValueError("Field name must be str type:%s" % value)
+		if value.find("__") >= 0:
+			raise ValueError("Field name cannot contain '__' symbol:%s" % value)
+		self._name = value
+
+	def to_sql(self,value):
 		if value is None:
 			return "NULL"
 		return value
 
-	def restore(self,value):
+	def to_python(self,value):
 		return value
 
 	def __str__(self):
@@ -139,33 +162,32 @@ class CharField(Field):
 		super().__init__(*args,**kwargs)
 		self.length = length
 
-	def convert(self,value):
+	def to_sql(self,value):
 		return "'%s'" % value
 
 
 
 class TextField(Field):
 	
-	def convert(self,value):
+	def to_sql(self,value):
 		return "'%s'" % value
 
 
 class IntegerField(Field):
-	
-	def convert(self,value):
-		if not isinstance(value,int):
-			raise ValueError("<%s:%s> value requires int type" % (self.__class__.__name__,self.name))
-		return value
+	pass
 
 
 class DateTimeField(Field):
 
-	
-	def restore(self,value):
-		from datetime import datetime
+	def to_sql(self,value):
+		if isinstance(value,(datetime,date)):
+			return datetime.strftime(value,"%Y-%m-%d %H:%M:%S")
+		return value
+
+	def to_python(self,value):
 		if isinstance(value,str):
 			value = value.strip()
-			if value.find("."):
+			if value.find(".") >= 0:
 				return datetime.strptime(value,"%Y-%m-%d %H:%M:%S.%f")
 			return datetime.strptime(value,"%Y-%m-%d %H:%M:%S")
 		return value
@@ -173,8 +195,12 @@ class DateTimeField(Field):
 
 class DateField(Field):
 
-	def restore(self,value):
-		from datetime import datetime
+	def render(self,value):
+		if isinstance(value,date):
+			return date.strftime(value,"%Y-%m-%d")
+		return value
+
+	def to_python(self,value):
 		if isinstance(value,str):
 			value = value.strip()
 			return datetime.strptime(value,"%Y-%m-%d")
@@ -183,8 +209,7 @@ class DateField(Field):
 
 class TimeField(Field):
 
-	def restore(self,value):
-		from datetime import datetime
+	def to_python(self,value):
 		if isinstance(value,str):
 			value = value.strip()
 			if value.find("."):
