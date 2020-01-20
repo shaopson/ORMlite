@@ -1,28 +1,19 @@
-import os,sys
-from ormlite import model,fields,creation
-from ormlite.model import Count,Min,Sum
-import ormlite
+import datetime
+from ormlite.base import configuration
+from ormlite.model import Model
+from ormlite import fields
+from ormlite.db.utils import create_tables,Min,Count,Sum
 
-
-db = os.path.join(os.getcwd(),'db.sqlite3')
-ormlite.Database.config(db)
-
-
-class User(model.Model):
-	name = fields.CharField(length=50)
-	email = fields.CharField(length=50)
-	pwd = fields.CharField(length=20)
-
-
-#creation.create_table([User],db)
-# u = User(name='shao',email='shaopson@outlook.com',pwd='1234')
-# u.save()
-us = User.object.get(id=11)
-print(us.name)
-us.name = 'shao'
-us.save()
+configuration.conf_db({
+    "ENGINE":"ormlite.db.sqlite3",
+	"NAME":"db.sqlite3",
+})
 
 
 
-
-
+class User(Model):
+    id = fields.PrimaryKey()
+    name = fields.CharField(max_length=50)
+    sex = fields.CharField(max_length=1)
+    age = fields.IntegerField()
+    birthday = fields.DateField()
