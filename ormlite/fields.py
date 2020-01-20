@@ -1,267 +1,195 @@
-from datetime import datetime,date
-
-from ormlite.utils import _format
-
-
-class Mappings:
-	columns = {
-		"CharField":"varchar(%s)",
-		"DateField":"data",
-		"DateTimeField":"datetime",
-		"IntegerField":"integer",
-		"TextField":"text",
-		"PrimaryKey":'integer',
-		"ForeignKey":'integer',
-	}
-
-	operates = {
-		"gt":"> %s",
-		"ge":">= %s",
-		"lt":"< %s",
-		"le":"<= %s",
-		"not":"!= %s",
-		"in":"IN %s",
-		"range":"BETWEEN %s AND %s",
-		"id":"= %s"
-	}
-	
-	@classmethod
-	def get_column(cls,field):
-		column = cls.columns.get(field.__class__.__name__,None)
-		if not column:
-			raise KeyError('Not found column:%s' % field)
-		length = getattr(field,'length',None)
-		if length:
-			return column % length
-		return column
+import datetime
+from ormlite.exception import FieldException
 
 
-def __gt(column,value):
-	return '"%s" > ?' % column, (value,)
-
-def __ge(column,value):
-	return '"%s" >= ?' % column, (value,)
-
-def __lt(column,value):
-	return '"%s" < ?' % column, (value,)
-
-def __le(column,value):
-	return '"%s" <= ?' % column, (value,)
-
-def __not(column,value):
-	return '"%s" != ?' % column, (value,)
-
-def __in(column,value):
-	params = "?" * len(value)
-	return '"%s" IN (%s)' % (column,",".join(params)), tuple(value)
-
-def __range(column,value):
-	params = []
-	for x in value:
-		params.append(x)
-	return '"%s" BETWEEN ? AND ?' % columns,(params.pop(0),params.pop())
-
-def __id(column,value):
-	return '"%s" = ?' % column, (value,)
-
-def __like(column,value):
-	return '"%s" LIKE ?' % column, (value,)
-
-def __contains(column,value):
-	return '"%s" LINK ?' % column, ("%%%s%%" % value,)
-
-def __startswith(column,value):
-	return '"%s" LIKE ?' % column, ("%s%%" % value,)
-
-def __endswith(column,value):
- 	return '"%s" LIKE ?' % column, ("%%%s" % value,)
-
-
-operators = {
-	"gt":__gt,
-	"ge":__ge,
-	"lt":__lt,
-	"lt":__le,
-	"not":__not,
-	"in":__in,
-	"range":__range,
-	"id":__id,
-	"like":__like,
-	"contains":__contains,
-	"startswith":__startswith,
-	"endswith":__endswith
-}
+class FieldNameError(FieldException):
+    pass
 
 
 class Field(object):
 
-	def __init__(self,default=None,unique=False,null=True,init=None,check=None):
-		self.default = default
-		self.unique = unique
-		self.null = null
-		self._name = None
-		if init is not None and not callable(init):
-			raise ValueError("init parameter is not a callable object:%s" % init)
-		else:
-			self.init = init
-		if check is not None and not callable(check):
-			raise ValueError("check parameter is not a callable object:%s" % check)
-		else:
-			self.check = check
+    def __init__(self,default=None,null=True,unique=False,primary_key=False,name=None):
+        """
+        :param default: 默认值
+        :param null: 值是否可为NULL
+        :param unique: 是否唯一
+        :param primary_key: 是否是主键
+        :param name: 字段名
+        """
+        self.default = default
+        self.null = null
+        self.unique = unique
+        self.primary_key = primary_key
+        self.name = name
 
-	def constraint(self):
-		sql = []
-		if self.default is not None:
-			sql.append("DEFAULT %s" % self.to_sql(self.default))
-		if self.unique:
-			sql.append("UNIQUE")
-		if not self.null:
-			sql.append("NOT NULL")
-		return ' '.join(sql)
+    def get_type(self):
+        return self.__class__.__name__
 
-	@property
-	def default(self):
-		return self._default
-	
-	@default.setter
-	def default(self,value):
-		if callable(value):
-			self._default = value()
-		self._default = value
+    def check(self):
+        pass
 
-	@property
-	def name(self):
-		return self._name
-	
-	@name.setter
-	def name(self,value):
-		if not isinstance(value,str):
-			raise ValueError("Field name must be str type:%s" % value)
-		if value.find("__") >= 0:
-			raise ValueError("Field name cannot contain '__' symbol:%s" % value)
-		self._name = value
+    def check_field_name(self):
+        if not self.name:
+            raise FieldNameError("Field name cannot be empty:%s" % self.name)
+        if self.name.startswith("__") or self.name.startswith("_"):
+            raise FieldNameError("Field names cannot begin with '__' or '_':%s" % self.name)
+        if self.name == "id" and not self.primary_key:
+            raise FieldNameError("This field is not a primary key and cannot be named 'id'")
 
-	def to_sql(self,value):
-		if value is None:
-			return "NULL"
-		return value
+    def to_sql(self,value):
+        #将python数据类型 换成sql类型
+        if value is None:
+            return "NULL"
+        return str(value)
 
-	def to_python(self,value):
-		return value
+    def adapt(self,value):
+        # python -> sql
+        return value
 
-	def __str__(self):
-		return self.__class__.__name__
+    def convert(self,value):
+        # sql -> python
+        return value
 
-	def __repr__(self):
-		return "<%s:%s>" % (self.__class__.__name__,self.name)
+    def __repr__(self):
+        return "<%s:%s>" % (self.__class__.__name__,self.name)
+
+
+class BooleanField(Field):
+
+    def to_sql(self,value):
+        if value:
+            return '"1"'
+        return '"0"'
 
 
 class CharField(Field):
 
-	def __init__(self,length=100,*args,**kwargs):
-		super().__init__(*args,**kwargs)
-		self.length = length
+    def __init__(self,max_length=None,*args,**kwargs):
+        super(CharField,self).__init__(*args,**kwargs)
+        self.max_length = max_length
 
-	def to_sql(self,value):
-		return "'%s'" % value
+    def get_type(self):
+        #字段类型
+        #orm将通过 field_type 转换成数据库的 column_type
+        return "CharField"
 
-
-
-class TextField(Field):
-	
-	def to_sql(self,value):
-		return "'%s'" % value
-
-
-class IntegerField(Field):
-	pass
-
-
-class DateTimeField(Field):
-
-	def to_sql(self,value):
-		if isinstance(value,(datetime,date)):
-			return datetime.strftime(value,"%Y-%m-%d %H:%M:%S")
-		return value
-
-	def to_python(self,value):
-		if isinstance(value,str):
-			value = value.strip()
-			if value.find(".") >= 0:
-				return datetime.strptime(value,"%Y-%m-%d %H:%M:%S.%f")
-			return datetime.strptime(value,"%Y-%m-%d %H:%M:%S")
-		return value
+    def to_sql(self,value):
+        return '"%s"' % value
 
 
 class DateField(Field):
 
-	def render(self,value):
-		if isinstance(value,date):
-			return date.strftime(value,"%Y-%m-%d")
-		return value
-
-	def to_python(self,value):
-		if isinstance(value,str):
-			value = value.strip()
-			return datetime.strptime(value,"%Y-%m-%d")
-		return value
+    def adapt(self,value):
+        if isinstance(value,datetime.datetime):
+            return value.date()
+        return value
 
 
-class TimeField(Field):
-
-	def to_python(self,value):
-		if isinstance(value,str):
-			value = value.strip()
-			if value.find("."):
-				return datetime.strptime(value,"%H:%M:%S.%f")
-			return datetime.strptime(value,"%H:%M:%S")
-		return value
+class DateTimeField(Field):
+    pass
 
 
-class PrimaryKey(Field):
+class FloatField(Field):
 
-	def __init__(self):
-		super().__init__()
-
-	def constraint(self):
-		return "PRIMARY KEY AUTOINCREMENT"
+    def get_type(self):
+        return "FloatField"
 
 
-SET_NULL = "SET NULL"
-CASCADE = "CASCADE"
-NO_ACTION = "NO ACTION"
-SET_DEFAULT = "SET DEFAULT"
 
-class RelatedMix(object):
-	
-	ops = [SET_NULL,SET_DEFAULT,CASCADE,NO_ACTION]
+class IntegerField(Field):
 
-	def __init__(self,related_model,on_update=None,on_delete=None):
-		self.related_model = related_model
-		self.on_update = on_update
-		self.on_delete = on_delete
-
-	def joint(self,name):
-		cons = []
-		if self.on_update:
-			if self.on_update not in self.ops:
-				raise ValueError("%s ON UPDATE not support %s" % (self.__class__.__name__,self.on_update))		
-			cons.append("ON UPDATE %s" % self.on_update)
-		if self.on_delete:
-			if self.on_delete not in self.ops:
-				raise ValueError("%s ON DELETE not support %s" % (self.__class__.__name__,self.on_update))
-			cons.append("ON UPDATE %s" % self.on_delete)
-		op = " ".join(cons)
-		return "FOREIGN KEY (%s) REFERENCES %s(%s) %s" % (name,self.related_model,"id",op)	
+    def get_type(self):
+        return "IntegerField"
 
 
-class ForeignKey(Field,RelatedMix):
+class TextField(Field):
 
-	def __init__(self,related_model,on_delete=None,on_update=None,**kwargs):
-		super(ForeignKey,self).__init__(**kwargs)
-		RelatedMix.__init__(self,related_model,on_update,on_delete)
+    def get_type(self):
+        return "TextField"
 
-	
+    def to_sql(self,value):
+        return "'%s'" % value
+
+
+class TimeFiled(Field):
+
+    def get_type(self):
+        return "TimeField"
+
+    def to_sql(self,value):
+        pass
+
+
+class PrimaryKey(IntegerField):
+
+    def __init__(self,*args,**kwargs):
+        super(PrimaryKey,self).__init__(*args,**kwargs)
+        self.primary_key = True
+        self.null = False
+
+    def get_type(self):
+        return "PrimaryKey"
+
+
+class RelatedField(Field):
+
+    def __init__(self,related_model,field,*args,**kwargs):
+        super(RelatedField,self).__init__(*args,**kwargs)
+        self.related_model = related_model
+        self.related_field = self.related_model.__fields__.get(field)
+
+    def get_type(self):
+        return self.related_field.get_type()
+
+
+class ForeignKey(RelatedField):
+    #一对多 外键
+    #关联的表必须只有一个主键，不能是组合主键
+    def __init__(self,related_model,*args,**kwargs):
+        field_name = related_model.__pk__.name
+        super(ForeignKey,self).__init__(related_model,field_name,*args,**kwargs)
+
+
+class RelatedDescriptor():
+
+    def __init__(self,related):
+        self.related = related
+        self._model = related.related_model
+        self._field = related.related_field
+        self.related_name = "%s_%s" % (self.related.name,self._field.name)
+        self.chech_name = "_%s_chech" % (self.related.name,)
+
+    def __get__(self,instance,owner):
+        if instance is None:
+            return self.related
+        obj = getattr(instance,self.chech_name,None)
+        if obj is not None:
+            return obj
+        related_value = getattr(instance,self.related_name,None)
+        if related_value is None:
+            return None
+        q = {
+            self._field.name:related_value
+        }
+        return self._model.query(**q)
+
+    def __set__(self,instance,value):
+        if value is None:
+            setattr(instance, self.chech_name, None)
+            setattr(instance, self.related_name, None)
+            return
+        if not isinstance(value,self._model):
+            raise ValueError('"%s.%s" must be a "%s" instance:%s' % (instance.__class__.__name__,self.related.name,
+                                                                         self._model.__name__,value))
+        setattr(instance,self.chech_name,value)
+        related_value = getattr(value,self._field.name,None)
+        if related_value is not None:
+            setattr(instance,self.related_name,related_value)
+
+    def __repr__(self):
+        return "<RelatedDescriptor:%s>" % (self.related.name)
+
+
 
 
 
