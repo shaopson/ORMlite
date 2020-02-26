@@ -8,19 +8,25 @@ class FieldNameError(FieldException):
 
 class Field(object):
 
-    def __init__(self,default=None,null=True,unique=False,primary_key=False,name=None):
+    def __init__(self,default=None,null=True,unique=False,primary_key=False,name=None,on_update=None,on_create=None,on_delete=None):
         """
         :param default: 默认值
         :param null: 值是否可为NULL
         :param unique: 是否唯一
         :param primary_key: 是否是主键
         :param name: 字段名
+        :param on_update: 当更新数据时要执行的动作
+        :param on_create: 当第一次写数据时要执行的动作
+        :param on_delete: 当删除数据时要执行的动作
         """
         self.default = default
         self.null = null
         self.unique = unique
         self.primary_key = primary_key
         self.name = name
+        self.on_update = on_update
+        self.on_create = on_create
+        self.on_delete = on_delete
 
     def get_type(self):
         return self.__class__.__name__
