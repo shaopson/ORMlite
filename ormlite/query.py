@@ -70,7 +70,9 @@ class Query(object):
 		if self.converter is None:
 			self.converter = get_object_converter(self.model)
 		sql, params = self.as_sql()
-		print(sql, params)
+		if configuration.debug:
+			s = sql.replace("?","%r")
+			configuration.logger.debug(s % params)
 		db = configuration.db
 		with db as connection:
 			cursor = connection.cursor()
@@ -80,7 +82,6 @@ class Query(object):
 				cursor.execute(sql)
 			self.cache = cursor.fetchall()
 			self.result = self.converter(self.cache,cursor)
-		print(self.cache)
 		return self.result
 
 	def copy(self):
@@ -96,7 +97,7 @@ class Query(object):
 
 	def __getitem__(self,value):
 		if not isinstance(value,(slice,int)):
-			raise TypeError("Query object must be integers or slices")
+			raise TypeError("parameter must be integers or slices")
 		if self.result:
 			return list(self.result)[value]
 		new = self.copy()
@@ -165,6 +166,7 @@ class Query(object):
 	def items(self,*fields,**kwargs):
 		new = self.copy()
 		new.fields = list(fields)
+		#new.fields.extend(fields)
 		new.alias.update(kwargs)
 		new.converter = dict_converter
 		return new
@@ -183,14 +185,13 @@ class Query(object):
 		new.converter = get_object_converter(self.model)
 		return new
 
-	def group(self,**kwargs):
+	def group(self,*fields,**kwargs):
 		new = self.copy()
-		alias = {k:v for k,v in kwargs.items()}
-		new.alias.update(kwargs)
-		new.groupby = self.fields[:]
+		new.fields.extend(fields)
+		new.groupby = list(fields)
 		new.converter = dict_converter
-		new.execute()
-		return new.result
+		new.alias.update(kwargs)
+		return new.execute()
 
 	def update(self,**update_fields):
 		update = Update(model=self.model,update_fields=update_fields,where=self.where)
@@ -282,7 +283,9 @@ class Statement(object):
 
 	def execute(self,db=None):
 		sql, params = self.as_sql()
-		print(sql, params)
+		if configuration.debug:
+			s = sql.replace("?",'%r')
+			configuration.logger.debug(s % params)
 		db = configuration.db
 		result = []
 		with db as connection:
@@ -321,7 +324,9 @@ class Insert(Statement):
 
 	def execute(self,db=None):
 		sql, params = self.as_sql()
-		print(sql, params)
+		if configuration.debug:
+			s = sql.replace("?",'%r')
+			configuration.logger.debug(s % params)
 		db = configuration.db
 		with db as connection:
 			cursor = connection.cursor()
