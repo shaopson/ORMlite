@@ -40,8 +40,8 @@ class ModelAgent(object):
     def values(self,*fields,flat=False):
         return Query(self.model,fields=self.fields).values(*fields,flat=flat)
 
-    def items(self,*fields):
-        return Query(self.model,fields=self.fields).items(*fields)
+    def items(self,*fields,**kwargs):
+        return Query(self.model,fields=self.fields).items(*fields,**kwargs)
 
     def count(self):
         return Query(self.model).count()
@@ -97,12 +97,12 @@ class ModelMetaclass(type):
         # 处理主键和关系字段
         pk_fields = []
         for field_name,field in field_mappings.items():
+            if not field.name:
+                field.name = field_name
             if field.primary_key:
                 pk_fields.append(field)
             elif isinstance(field,fields.RelatedField):
                 attrs[field_name] = fields.RelatedDescriptor(field)
-            if not field.name:
-                field.name = field_name
         if not pk_fields:
             field = fields.PrimaryKey(name="id")
             field_mappings["id"] = field
@@ -126,16 +126,27 @@ class ModelMetaclass(type):
 
 class Model(object,metaclass=ModelMetaclass):
 
-    def __init__(self,**kwargs):
+    def __init__(self,*args,**kwargs):
         #设置默认值
-        for field_name,field in self.__fields__.items():
+        fields = set(self.__fields__.keys())
+        attrs = {}
+        for attr,value in zip(fields,args):
+            attrs[attr] = value
+        if kwargs:
+            for attr,value in kwargs.items():
+                attrs[attr] = value
+        no_init_field = fields - set(attrs.keys())
+        for field_name in no_init_field:
+            field = self.__fields__.get(field_name)
             default_value = getattr(field,"default",None)
-            setattr(self,field_name,default_value)
-        self.__dict__.update(kwargs)
+            attrs[field_name] = default_value
+        for attr,value in attrs.items():
+            setattr(self,attr,value)
+
 
     def save(self):
         if self.pk is not None:
-            self.__class__.object._update_obj(self)
+            self.__class__.object._update_obj(self,self.__fields__.keys())
         else:
             self.__class__.object._insert(self)
 
