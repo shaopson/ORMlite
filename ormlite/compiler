@@ -1,6 +1,6 @@
 #from ormlite.base import configuration
 from ormlite.exception import CompileError
-
+from ormlite.fields import ForeignKey,RelatedField
 
 # def get_compiler():
 #     db = configuration.db
@@ -74,15 +74,19 @@ class Compiler(object):
         fields = []
         params = []
         for attr, field in instance.__fields__.items():
-            fields.append('"%s"' % attr)
-            # if isinstance(field, RelatedMix):
-            #     value = getattr(obj, attr).pk
-            # else:
-            #     value = getattr(obj, attr)
+            print(attr,field)
+            if isinstance(field, RelatedField):
+                related_obj = getattr(instance,attr)
+                value = related_obj.pk if hasattr(related_obj,"pk") else related_obj
+            elif attr.endswith("_id") or attr.endswith("_pk"):
+                value = getattr(instance, attr)
+                attr = attr[:-3]
+            else:
+                value = getattr(instance, attr)
+                value = field.adapt(value)
             # if field.auto:
             #     value = field.auto(value)
-            value = getattr(instance, attr)
-            value = field.adapt(value)
+            fields.append('"%s"' % attr)
             params.append(value)
         sql = 'INSERT INTO "%s" (%s) VALUES (%s);' % (table, ",".join(fields), ",".join(self.placeholder * len(params)))
         return sql,tuple(params)
@@ -175,7 +179,7 @@ class Compiler(object):
         if query.limit is not None:
             if isinstance(query.limit, slice):
                 start = query.limit.start or 0
-                length = query.limit.stop
+                length = query.limit.stop or -1 # max length
                 sql.append("LIMIT %s OFFSET %s" % (length, start))
             elif isinstance(query.limit, int):
                 sql.append("LIMIT 1 OFFSET %s" % query.limit)
