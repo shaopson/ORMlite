@@ -1,187 +1,369 @@
-from ormlite import fields,exception
+import copy
+from ormlite import exception
 from ormlite.base import configuration
-from ormlite.query import Query,Insert,Update,Delete,Where
+from ormlite.db.utils import Count
 
-class ModelAgent(object):
-
-    AccessorError = exception.AccessorError
-
-    def __init__(self, model, instance=None):
-        self.model = model
-        self.table = model.__table__
-        self._instance = instance
-        self.fields = list(model.__fields__.keys())
-
-    def create(self,**kwargs):
-        obj = self.model(**kwargs)
-        obj.save()
-        return obj
-
-    def get_or_create(self,**kwargs):
-        try:
-           return self.get(**kwargs)
-        except self.model.NotExists:
-           return self.create(**kwargs)
-
-    def get(self, **kwargs):
-        return Query(self.model,self.fields).get(**kwargs)
-
-    def all(self):
-        return Query(self.model, fields=self.fields)
-
-    def query(self, **kwargs):
-        where = Where(kwargs)
-        return Query(self.model,fields=self.fields,where=where)
-
-    def exclude(self,**kwargs):
-        where = ~Where(kwargs)
-        return Query(self.model,fields=self.fields,where=where)
-
-    def values(self,*fields,flat=False):
-        return Query(self.model,fields=self.fields).values(*fields,flat=flat)
-
-    def items(self,*fields,**kwargs):
-        return Query(self.model,fields=self.fields).items(*fields,**kwargs)
-
-    def count(self):
-        return Query(self.model).count()
-
-    def update(self, **kwargs):
-        return Update(model=self.model,update_fields=kwargs).execute()
-
-    def _insert(self,obj):
-        if not isinstance(obj,self.model):
-            raise TypeError("Argument 'obj' should be %s type" % self.model)
-        insert = Insert(model=self.model,instance=obj)
-        insert.execute()
-        obj.pk = insert.get_id()
-
-    def _update_obj(self,obj,fields):
-        if not isinstance(obj,self.model):
-            raise TypeError("Argument 'obj' should be %s type" % self.model)
-        if obj.pk is None:
-            raise AttributeError("%s primary key '%s' field value is invalid:%s" % (obj,obj.pk_name,obj.pk) )
-        Update(model=self.model,instance=obj,fields=fields).execute()
-
-    def _delete_obj(self,obj):
-        if not isinstance(obj,self.model):
-            raise TypeError("Argument 'obj' should be %s type" % self.model)
-        if obj.pk is None:
-            raise AttributeError("%s primary key '%s' field value is invalid:%s" % (obj,obj.pk_name,obj.pk) )
-        return Delete(model=self.model,instance=obj).execute()
+def flat_converter(row,cursor):
+	return [values[0] for values in row]
 
 
-class ModelAgentDescriptor(object):
-
-    def __init__(self,model):
-        self.agent = ModelAgent(model)
-
-    def __get__(self,instance,onwer):
-        if instance is not None:
-            raise AttributeError("ModelAgent is not accessible via %s instances" % instance)
-        return self.agent
-
-
-class ModelMetaclass(type):
-
-    def __new__(cls,name,bases,attrs):
-        parents = [base for base in bases if isinstance(base,ModelMetaclass)]
-        # 排除Model class
-        if not parents:
-            return super(ModelMetaclass,cls).__new__(cls, name, bases, attrs)
-        #收集Field
-        field_mappings = {}
-        for attr_name,attr in attrs.items():
-            if isinstance(attr,fields.Field):
-                field_mappings[attr_name] = attr
-        # 处理主键和关系字段
-        pk_fields = []
-        for field_name,field in field_mappings.items():
-            if not field.name:
-                field.name = field_name
-            if field.primary_key:
-                pk_fields.append(field)
-            elif isinstance(field,fields.RelatedField):
-                attrs[field_name] = fields.RelatedDescriptor(field)
-        if not pk_fields:
-            field = fields.PrimaryKey(name="id")
-            field_mappings["id"] = field
-            pk_fields.append(field)
-        elif len(pk_fields) > 1:
-            raise exception.ModelError("A model can't have more than one primary key Field.")
-        attrs["__fields__"] = field_mappings
-        attrs["__pk__"] = pk_fields[0]
-        attrs["__table__"] = name
-        model = super(ModelMetaclass,cls).__new__(cls,name,bases,attrs)
-        model.object = ModelAgentDescriptor(model)
-        setattr(model,"NotExists",exception.NotExists)
-        setattr(model, "MultiResult", exception.MultiResult)
-        return model
-
-    @staticmethod
-    def check_fields(field_mappings):
-        for field in field_mappings.values():
-            field.check()
+def dict_converter(row,cursor):
+	result = []
+	keys = [col[0] for col in cursor.description]
+	for values in row:
+		d = {}
+		for k,v in zip(keys,values):
+			d[k] = v
+		result.append(d)
+	return result
 
 
-class Model(object,metaclass=ModelMetaclass):
-
-    def __init__(self,*args,**kwargs):
-        #设置默认值
-        fields = set(self.__fields__.keys())
-        attrs = {}
-        for attr,value in zip(fields,args):
-            attrs[attr] = value
-        if kwargs:
-            for attr,value in kwargs.items():
-                attrs[attr] = value
-        no_init_field = fields - set(attrs.keys())
-        for field_name in no_init_field:
-            field = self.__fields__.get(field_name)
-            default_value = getattr(field,"default",None)
-            attrs[field_name] = default_value
-        for attr,value in attrs.items():
-            setattr(self,attr,value)
+def raw_data(row,cursor):
+	return row
 
 
-    def save(self):
-        if self.pk is not None:
-            self.__class__.object._update_obj(self,self.__fields__.keys())
-        else:
-            self.__class__.object._insert(self)
-
-    def delete(self):
-        if self.pk is not None:
-            self.__class__.object._delete_obj(self)
-            self.pk = None
-
-    def update(self,*fields):
-        if self.pk is None:
-            raise AttributeError("%s primary key invalid " % self)
-        self.__class__.object._update_obj(self,fields)
+def get_object_converter(cls):
+	def converter(row,cursor):
+		result = []
+		cols = [col[0] for col in cursor.description]
+		for values in row:
+			kwargs = {}
+			for k,v in zip(cols,values):
+				kwargs[k] = v
+			result.append(cls(**kwargs))
+		return result
+	return converter
 
 
-    @property
-    def pk(self):
-        return getattr(self,self.__pk__.name)
+class Result(object):
 
-    @pk.setter
-    def pk(self,value):
-        setattr(self,self.__pk__.name,value)
+	def __init__(self,data=None,converter=None):
+		self.data = data
+		self.converter = converter
 
-    @property
-    def pk_name(self):
-        return self.__pk__.name
 
-    def __eq__(self,other):
-        pass
+class Query(object):
+	statement = "SELECT"
 
-    def __repr__(self):
-        attrs = ["%s:%s" % (k,v) for k,v in self.__dict__.items()]
-        if len(attrs) > 6:
-            attrs = attrs[:6]
-            attrs[-1] = '...'
-        return "<%s object: %s>" % (self.__class__.__name__, ','.join(attrs))
+	def __init__(self,model,fields=None,where=None,**kwargs):
+		self.model = model
+		self.table = model.__table__
+		self.fields = fields or []
+		self.where = where or Where()
+		self.alias = kwargs.get('alias',{})
+		self.distinct = kwargs.get('distinct',False)
+		self.orderby = kwargs.get('orderby',[])
+		self.groupby = kwargs.get('groupby',[])
+		self.limit = kwargs.get('limit',None)
+		self.function = None
+		self.cache = None
+		self.result = None
+		self.compiler = None
+		self.converter = None
 
-    def __str__(self):
-        return "<%s object>" % self.__class__.__name__
+	def as_sql(self):
+		if self.compiler is None:
+			self.compiler = configuration.compiler
+		return self.compiler.compile(self)
+
+	def execute(self,db=None):
+		if self.converter is None:
+			self.converter = get_object_converter(self.model)
+		sql, params = self.as_sql()
+		if configuration.debug:
+			s = sql.replace("?","%r")
+			configuration.logger.debug(s % params)
+		db = configuration.db
+		with db as connection:
+			cursor = connection.cursor()
+			if params:
+				cursor.execute(sql, params)
+			else:
+				cursor.execute(sql)
+			self.cache = cursor.fetchall()
+			self.result = self.converter(self.cache,cursor)
+		return self.result
+
+	def copy(self):
+		#克隆并返回一个新的对象
+		new = self.__class__(self.model,self.fields)
+		new.where = self.where.copy()
+		new.alias = self.alias.copy()
+		new.distinct = self.distinct
+		new.groupby = self.groupby[:]
+		new.orderby = self.orderby[:]
+		new.limit = self.limit
+		return new
+
+	def __getitem__(self,value):
+		if not isinstance(value,(slice,int)):
+			raise TypeError("parameter must be integers or slices")
+		if isinstance(value,int) and value < 0:
+			raise TypeError("Negative indexing is not supported.")
+		elif isinstance(value,slice) and value.start is not None and value.start < 0:
+			raise TypeError("Negative indexing is not supported.")
+		elif isinstance(value,slice) and value.stop is not None and value.stop < 0:
+			raise TypeError("Negative indexing is not supported.")
+		if self.result:
+			return list(self.result)[value]
+		new = self.copy()
+		new.limit = value
+		new.execute()
+		if isinstance(value,int):
+			return new.result[0] if new.result else []
+		return new.result[::value.step] if value.step else new.result
+
+	def __bool__(self):
+		if self.result is None:
+			self.execute()
+		return bool(self.result)
+
+	def __iter__(self):
+		if self.result is None:
+			self.execute()
+		return iter(self.result)
+
+	def __len__(self):
+		if self.result is None:
+			self.execute()
+		return len(self.result)
+
+	def __str__(self):
+		if self.result is None:
+			self.execute()
+		return "<Query %r>" % self.result
+
+	def get(self,**kwargs):
+		query = self.copy().query(**kwargs)
+		query.execute()
+		if not query.result:
+			raise query.model.NotExists('Not query %s object record:%s' % (self.model,query.where))
+		elif len(query.result) > 1:
+			raise query.model.MultiResult('Query multiple %s object records:%s' % (self.model.__name__,query.where))
+		return query.result[0]
+
+	def count(self):
+		if self.result is not None:
+			return len(self.result)
+		new = self.copy()
+		new.fields = []
+		new.alias = {"count":Count(self.model.__pk__.name)}
+		new.converter = flat_converter
+		new.execute()
+		return new.result[0]
+
+	def sort(self,*fields):
+		new = self.copy()
+		new.orderby.extend(fields)
+		new.converter = self.converter
+		return new
+
+	def values(self,*fields,**kwargs):
+		flat = kwargs.pop('flat', False)
+		new = self.copy()
+		new.alias.update(kwargs)
+		new.fields = list(fields)
+		if flat:
+			new.converter = flat_converter
+		else:
+			new.converter = raw_data
+		return new
+
+	def items(self,*fields,**kwargs):
+		new = self.copy()
+		new.fields = list(fields)
+		#new.fields.extend(fields)
+		new.alias.update(kwargs)
+		new.converter = dict_converter
+		return new
+
+	def query(self,**kwargs):
+		where = Where(kwargs)
+		new = self.copy()
+		new.where &= where
+		new.converter = get_object_converter(self.model)
+		return new
+
+	def exclude(self,**kwargs):
+		where = ~Where(kwargs)
+		new = self.copy()
+		new.where &= where
+		new.converter = get_object_converter(self.model)
+		return new
+
+	def group(self,*fields,**kwargs):
+		new = self.copy()
+		new.fields.extend(fields)
+		new.groupby = list(fields)
+		new.converter = dict_converter
+		new.alias.update(kwargs)
+		return new.execute()
+
+	def update(self,**update_fields):
+		update = Update(model=self.model,update_fields=update_fields,where=self.where)
+		update.execute()
+
+	def first(self):
+		return self[0]
+
+	def last(self):
+		if self.result is not None:
+			return self.result[-1]
+		new = self.copy()
+		if new.orderby:
+			new_orderby = []
+			for field_name in new.orderby:
+				if field_name.startswith('-'):
+					new_orderby.append(field_name[1:])
+				else:
+					new_orderby.append("-" + field_name)
+			new.orderby = new_orderby
+		else:
+			new.orderby = ['-id']
+		return new.first()
+
+	def exists(self):
+		if self.result is None:
+			self.execute()
+		return bool(self.result)
+
+
+class Where(object):
+	statement = "WHERE"
+
+	def __init__(self,condition=None):
+		self.buf = []
+		if condition:
+			self.buf.append(condition)
+
+	def __or__(self,other):
+		new = self.copy()
+		if other and self:
+			where = other.copy()
+			new.brackets()
+			where.brackets()
+			new.buf.append(" OR ")
+			new.buf.append(where)
+		elif other:
+			new = other.copy()
+		return new
+
+	def __and__(self,other):
+		new = self.copy()
+		if other and self:
+			where = other.copy()
+			new.brackets()
+			where.brackets()
+			new.buf.append(" AND ")
+			new.buf.append(where)
+		elif other:
+			new = other.copy()
+		return new
+
+	def __invert__(self):
+		new = self.copy()
+		if self:
+			new.brackets()
+			new.buf.insert(0,'NOT ')
+		return new
+
+	def __str__(self):
+		where = ""
+		for x in self.buf:
+			where += str(x)
+		return where
+
+	def __bool__(self):
+		return bool(self.buf)
+
+	def __copy__(self):
+		return self.copy()
+
+	def copy(self):
+		new = self.__class__()
+		new.buf = copy.deepcopy(self.buf)
+		return new
+
+	def brackets(self):
+		if len(self.buf) > 1:
+			self.buf.insert(0,"(")
+			self.buf.append(")")
+
+
+class Statement(object):
+
+	def __init__(self, model, instance=None, fields=None, where=None):
+		self.model = model
+		self.table = model.__table__
+		self.instance = instance
+		self.fields = fields
+		self.where = where
+		self.compiler = None
+		self.converter = None
+
+	def as_sql(self):
+		if self.compiler is None:
+			self.compiler = configuration.compiler
+		return self.compiler.compile(self)
+
+	def execute(self,db=None):
+		sql, params = self.as_sql()
+		if configuration.debug:
+			s = sql.replace("?",'%r')
+			configuration.logger.debug(s % params)
+		db = configuration.db
+		result = []
+		with db as connection:
+			cursor = connection.cursor()
+			if params:
+				cursor.execute(sql,params)
+			else:
+				cursor.execute(sql)
+			if callable(self.converter):
+				result = self.converter(cursor.fetchall(),cursor)
+			else:
+				result = cursor.fetchall()
+		return result
+
+	def add_where(self,kwargs):
+		where = Where(kwargs)
+		if self.where:
+			self.where = self.where | where
+		else:
+			self.where = where
+
+	def __str__(self):
+		return "<%s object>" % self.__class__.__name__
+
+
+class Update(Statement):
+	statement = "UPDATE"
+
+	def __init__(self, model, instance=None, fields=None, where=None,update_fields=None):
+		super(Update,self).__init__(model,instance,fields,where)
+		self.update_fields = update_fields
+
+
+class Insert(Statement):
+	statement = "INSERT"
+
+	def execute(self,db=None):
+		sql, params = self.as_sql()
+		if configuration.debug:
+			s = sql.replace("?",'%r')
+			configuration.logger.debug(s % params)
+		db = configuration.db
+		with db as connection:
+			cursor = connection.cursor()
+			cursor.execute(sql,params)
+			self.lastrowid = cursor.lastrowid
+		return self.lastrowid
+
+	def get_id(self):
+		return getattr(self,"lastrowid",None)
+
+
+class Delete(Statement):
+	statement = "DELETE"
+	pass
+
