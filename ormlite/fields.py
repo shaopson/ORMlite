@@ -8,13 +8,14 @@ class FieldNameError(FieldException):
 
 class Field(object):
 
-    def __init__(self,default=None,null=True,unique=False,primary_key=False,name=None,on_update=None,on_create=None,on_delete=None):
+    def __init__(self,default=None,null=True,unique=False,primary_key=False,
+                column_name=None,on_update=None,on_create=None,on_delete=None):
         """
         :param default: 默认值
         :param null: 值是否可为NULL
         :param unique: 是否唯一
         :param primary_key: 是否是主键
-        :param name: 字段名
+        :param column_name: 字段名
         :param on_update: 当更新数据时要执行的动作
         :param on_create: 当第一次写数据时要执行的动作
         :param on_delete: 当删除数据时要执行的动作
@@ -23,24 +24,27 @@ class Field(object):
         self.null = null
         self.unique = unique
         self.primary_key = primary_key
-        self.name = name
+        self.column = column_name
         self.on_update = on_update
         self.on_create = on_create
         self.on_delete = on_delete
+        self.name = None
 
     def get_type(self):
         return self.__class__.__name__
+
 
     def check(self):
         pass
 
     def check_field_name(self):
-        if not self.name:
-            raise FieldNameError("Field name cannot be empty:%s" % self.name)
-        if self.name.startswith("__") or self.name.startswith("_"):
-            raise FieldNameError("Field names cannot begin with '__' or '_':%s" % self.name)
-        if self.name == "id" and not self.primary_key:
-            raise FieldNameError("This field is not a primary key and cannot be named 'id'")
+        pass
+        # if not self.name:
+        #     raise FieldNameError("Field name cannot be empty:%s" % self.name)
+        # if self.name.startswith("__") or self.name.startswith("_"):
+        #     raise FieldNameError("Field names cannot begin with '__' or '_':%s" % self.name)
+        # if self.name == "id" and not self.primary_key:
+        #     raise FieldNameError("This field is not a primary key and cannot be named 'id'")
 
     def to_sql(self,value):
         #将python数据类型 换成sql类型
@@ -57,7 +61,7 @@ class Field(object):
         return value
 
     def __repr__(self):
-        return "<%s:%s>" % (self.__class__.__name__,self.name)
+        return "<%s:%s>" % (self.__class__.__name__,self.attname)
 
 
 class BooleanField(Field):
@@ -137,6 +141,36 @@ class PrimaryKey(IntegerField):
         return "PrimaryKey"
 
 
+class LazyModel():
+
+    def __init__(self,model_name,module_name):
+        self.model_name = model_name
+        self.model = None
+
+    def __set__(self,instance,value):
+        pass
+
+    def __get__(self,instance,cls):
+        if instance is None:
+            return self
+        if self.model:
+            return self.model
+
+
+
+class RelatedObject(object):
+
+    def __init__(self,model):
+        self.model = model
+        self.object_cache = None
+
+    def get_object(self):
+        if self.object_cache:
+            return self.object_cache
+
+
+
+
 class RelatedField(Field):
 
     def __init__(self,related_model,field,*args,**kwargs):
@@ -158,16 +192,13 @@ class ForeignKey(RelatedField):
 
 class RelatedDescriptor():
 
-    def __init__(self,related):
-        self.related = related
-        self._model = related.related_model
-        self._field = related.related_field
-        self.related_name = "%s_%s" % (self.related.name,self._field.name)
-        self.chech_name = "_%s_chech" % (self.related.name,)
+    def __init__(self,field):
+        self.field = field
+        self.object_cache = None
 
     def __get__(self,instance,owner):
         if instance is None:
-            return self.related
+            return self.field # or self
         obj = getattr(instance,self.chech_name,None)
         if obj is not None:
             return obj

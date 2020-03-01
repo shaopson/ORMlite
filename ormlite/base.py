@@ -12,6 +12,7 @@ class Configuration(object):
         self.compiler = None
         self.logger = None
         self._debug = False
+        self._models = []
 
     def conf_db(self,config):
         self.db_config = config

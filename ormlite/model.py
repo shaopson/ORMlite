@@ -82,22 +82,37 @@ class ModelAgentDescriptor(object):
         return self.agent
 
 
+class Options(object):
+
+    def __init__(self):
+        self.pk = None
+        self.field_map = None
+        self.model_name = None
+
+    def get_field(self,field_name):
+        return self.field_map.get(field_name,None)
+
+    def get_fields(self):
+        return tuple(self.field_map.values())
+
+
 class ModelMetaclass(type):
 
-    def __new__(cls,name,bases,attrs):
+    def __new__(cls,cls_name,bases,attrs):
         parents = [base for base in bases if isinstance(base,ModelMetaclass)]
         # 排除Model class
         if not parents:
-            return super(ModelMetaclass,cls).__new__(cls, name, bases, attrs)
+            return super(ModelMetaclass,cls).__new__(cls, cls_name, bases, attrs)
         #收集Field
         field_mappings = {}
+        fields = []
         for attr_name,attr in attrs.items():
             if isinstance(attr,fields.Field):
                 field_mappings[attr_name] = attr
         # 处理主键和关系字段
         pk_fields = []
         for field_name,field in field_mappings.items():
-            if not field.name:
+            if field.name is None:
                 field.name = field_name
             if field.primary_key:
                 pk_fields.append(field)
@@ -109,10 +124,12 @@ class ModelMetaclass(type):
             pk_fields.append(field)
         elif len(pk_fields) > 1:
             raise exception.ModelError("A model can't have more than one primary key Field.")
-        attrs["__fields__"] = field_mappings
-        attrs["__pk__"] = pk_fields[0]
-        attrs["__table__"] = name
-        model = super(ModelMetaclass,cls).__new__(cls,name,bases,attrs)
+        opts = Options()
+        setattr(opts,"pk",pk_fields[0])
+        setattr(opts,"model_name",cls_name)
+        setattr(opts,"field_map",field_mappings)
+        attrs["_opts"] = opts
+        model = super(ModelMetaclass,cls).__new__(cls,cls_name,bases,attrs)
         model.object = ModelAgentDescriptor(model)
         setattr(model,"NotExists",exception.NotExists)
         setattr(model, "MultiResult", exception.MultiResult)
