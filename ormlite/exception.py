@@ -4,43 +4,29 @@ class ORMLiteException(Exception):
     pass
 
 
-class FieldException(ORMLiteException):
-    # field base exception
+class ModelException(Exception):
     pass
 
 
-class ModelException(ORMLiteException):
-    # model base exception
+class CompilerException(Exception):
     pass
 
 
-class CompilerException(ORMLiteException):
-    # compiler base exception
+class FieldException(Exception):
     pass
 
 
-class NotExists(ModelException):
-    # record not exists
-    pass
-
-class MultiResult(ModelException):
+class ObjectNotExists(Exception):
     pass
 
 
-class FieldNameException(ORMLiteException):
+class MultiResult(Exception):
     pass
 
-class FieldTypeError(ORMLiteException):
-    pass
 
 class ModelError(ORMLiteException):
     pass
 
-class RecordNotExists(ORMLiteException):
-    pass
-
-class MultiRecordError(ORMLiteException):
-    pass
 
 class CompileError(ORMLiteException):
     pass
@@ -48,6 +34,5 @@ class CompileError(ORMLiteException):
 class InvalidConfiguration(ORMLiteException):
     pass
 
-
-class AccessorError(ORMLiteException):
+class ModelAgentError(ORMLiteException):
     pass
