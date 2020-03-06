@@ -1,5 +1,4 @@
 import copy
-from ormlite import exception
 from ormlite.base import configuration
 from ormlite.db.utils import Count
 
@@ -20,6 +19,22 @@ def dict_converter(row,cursor):
 
 def raw_data(row,cursor):
 	return row
+
+
+def get_alias_converter(aliases):
+	def converter(row,cursor):
+		result = []
+		columns = [col[0] for col in cursor.description]
+		for values in row:
+			kwargs = {}
+			for k,v in zip(columns,values):
+				alias = aliases.get(k,None)
+				if alias:
+					k = alias
+				kwargs[k] = v
+			result.append(kwargs)
+		return result
+	return converter
 
 
 def get_object_converter(cls):
@@ -47,8 +62,8 @@ class Query(object):
 
 	def __init__(self,model,fields=None,where=None,**kwargs):
 		self.model = model
-		self.table = model.__table__
-		self.fields = fields or []
+		self.table = model._opts.model_name
+		self.fields = list(fields) or []
 		self.where = where or Where()
 		self.alias = kwargs.get('alias',{})
 		self.distinct = kwargs.get('distinct',False)
@@ -90,8 +105,8 @@ class Query(object):
 		new.where = self.where.copy()
 		new.alias = self.alias.copy()
 		new.distinct = self.distinct
-		new.groupby = self.groupby[:]
-		new.orderby = self.orderby[:]
+		new.groupby = list(self.groupby)
+		new.orderby = list(self.orderby)
 		new.limit = self.limit
 		return new
 
@@ -137,7 +152,7 @@ class Query(object):
 		query = self.copy().query(**kwargs)
 		query.execute()
 		if not query.result:
-			raise query.model.NotExists('Not query %s object record:%s' % (self.model,query.where))
+			raise query.model.DoesNotExists('Not query %s object record:%s' % (self.model,query.where))
 		elif len(query.result) > 1:
 			raise query.model.MultiResult('Query multiple %s object records:%s' % (self.model.__name__,query.where))
 		return query.result[0]
@@ -147,7 +162,7 @@ class Query(object):
 			return len(self.result)
 		new = self.copy()
 		new.fields = []
-		new.alias = {"count":Count(self.model.__pk__.name)}
+		new.alias = {"count":Count(self.model.get_pk_name())}
 		new.converter = flat_converter
 		new.execute()
 		return new.result[0]
@@ -158,7 +173,7 @@ class Query(object):
 		new.converter = self.converter
 		return new
 
-	def values(self,*fields,**kwargs):
+	def items(self,*fields,**kwargs):
 		flat = kwargs.pop('flat', False)
 		new = self.copy()
 		new.alias.update(kwargs)
@@ -166,14 +181,14 @@ class Query(object):
 		if flat:
 			new.converter = flat_converter
 		else:
-			new.converter = raw_data
+			new.converter = raw_data#get_fields_converter(new.fields)
 		return new
 
-	def items(self,*fields,**kwargs):
+	def values(self,*fields,**kwargs):
 		new = self.copy()
 		new.fields = list(fields)
-		#new.fields.extend(fields)
-		new.alias.update(kwargs)
+		if kwargs:
+			new.alias.update(kwargs)
 		new.converter = dict_converter
 		return new
 
@@ -191,12 +206,11 @@ class Query(object):
 		new.converter = get_object_converter(self.model)
 		return new
 
-	def group(self,*fields,**kwargs):
+	def group(self,*fields):
 		new = self.copy()
 		new.fields.extend(fields)
 		new.groupby = list(fields)
 		new.converter = dict_converter
-		new.alias.update(kwargs)
 		return new.execute()
 
 	def update(self,**update_fields):
@@ -294,7 +308,7 @@ class Statement(object):
 
 	def __init__(self, model, instance=None, fields=None, where=None):
 		self.model = model
-		self.table = model.__table__
+		self.table = model._opts.model_name
 		self.instance = instance
 		self.fields = fields
 		self.where = where
