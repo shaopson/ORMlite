@@ -1,6 +1,6 @@
-#from ormlite.base import configuration
+import datetime
 from ormlite.exception import CompileError
-from ormlite.fields import ForeignKey,RelatedField
+
 
 # def get_compiler():
 #     db = configuration.db
@@ -71,24 +71,25 @@ class Compiler(object):
     def _compile_insert(self,insert):
         table = insert.table
         instance = insert.instance
-        fields = []
+        fields = instance._opts.fields
+        columns = []
         params = []
-        for attr, field in instance.__fields__.items():
-            print(attr,field)
-            if isinstance(field, RelatedField):
-                related_obj = getattr(instance,attr)
-                value = related_obj.pk if hasattr(related_obj,"pk") else related_obj
-            elif attr.endswith("_id") or attr.endswith("_pk"):
-                value = getattr(instance, attr)
-                attr = attr[:-3]
+        for field in fields:
+            if field.is_related:
+                obj = getattr(instance,field.name,None)
+                if obj is not None:
+                    value = obj.pk
+                else:
+                    value = getattr(instance,field.get_column(),None)
             else:
-                value = getattr(instance, attr)
+                value = getattr(instance,field.name,None)
+                if value is None and hasattr(field,"on_insert"):
+                    value = field.on_insert()
+                    setattr(instance,field.name,value)
                 value = field.adapt(value)
-            # if field.auto:
-            #     value = field.auto(value)
-            fields.append('"%s"' % attr)
+            columns.append('"%s"' % field.get_column())
             params.append(value)
-        sql = 'INSERT INTO "%s" (%s) VALUES (%s);' % (table, ",".join(fields), ",".join(self.placeholder * len(params)))
+        sql = 'INSERT INTO "%s" (%s) VALUES (%s);' % (table, ",".join(columns), ",".join(self.placeholder * len(params)))
         return sql,tuple(params)
 
     def _compile_delete(self,delete):
@@ -98,7 +99,7 @@ class Compiler(object):
         if instance:
             if instance.pk is None:
                 raise ValueError("%s primary key is invalid" % instance)
-            delete.add_where({instance.pk_name:instance.pk})
+            delete.add_where({instance.get_pk_name():instance.pk})
         if delete.where:
             where = delete.where
         else:
@@ -110,34 +111,38 @@ class Compiler(object):
     def _compile_update(self,update):
         instance = update.instance
         sql = ['UPDATE "%s" SET' % update.table]
-        update_fields = {}
+        update_columns = {}
         params = []
         if instance:
             if instance.pk is None:
                 raise CompileError("%s primary key is invalid" % instance)
-            update.add_where({instance.pk_name: instance.pk})
+            update.add_where({instance.get_pk_field().name: instance.pk})
             if update.fields:
                 for field_name in update.fields:
-                    update_fields[field_name] = self.placeholder
+                    update_columns[field_name] = self.placeholder
                     value = getattr(instance,field_name)
                     params.append(value)
             else:
-                for field_name, field in instance.__fields__.items():
+                for field in instance._opts.fields:
                     #跳过主键
-                    if field_name == instance.pk_name:
+                    if field.primary_key:
                         continue
                     # 如果是关系对象或有时间对象需要自动更新时间 [待处理]
-                    value = getattr(instance, field_name)
-                    update_fields[field_name] = self.placeholder
+                    if field.is_related:
+                        obj = getattr(instance,field.name,None)
+                        value = obj.pk if obj else getattr(instance,field.get_column(),None)
+                    else:
+                        value = getattr(instance, field.name)
+                    update_columns[field.get_column()] = self.placeholder
                     params.append(value)
         elif update.update_fields:
             for field_name, value in update.update_fields.items():
-                update_fields[field_name] = self.placeholder
+                update_columns[field_name] = self.placeholder
                 params.append(value)
         else:
             raise CompileError("No fields need update")
-        columns = ['"%s" = %s' % (k, v) for k, v in update_fields.items()]
-        sql.append(','.join(columns))
+        expressions = ['"%s" = %s' % (k, v) for k, v in update_columns.items()]
+        sql.append(','.join(expressions))
         where = update.where
         if where:
             sql.append("WHERE")
@@ -151,14 +156,26 @@ class Compiler(object):
     def _compile_select(self,query):
         sql = ['SELECT']
         params = []
+        columns = []
+        aliases = []
+        if query.fields:
+            for field_name in query.fields:
+                field = query.model._opts.get_field(field_name)
+                if field:
+                    column = field.get_column()
+                    if field.is_related:
+                        aliases.append(self.alias_column(column,field.name))
+                    else:
+                        columns.append(column)
+                else:
+                    columns.append(field_name)
+
         if query.distinct:
             sql.append("DISTINCT")
-        fields = [self.quote(f) for f in query.fields]
         if query.alias:
-            query.fields.extend(query.alias.keys())
-            alias = (self.alias_field(v,k) for k, v in query.alias.items())
-            fields.extend(alias)
-        sql.append(', '.join(fields))
+            aliases.extend(self.alias_column(v,k) for k, v in query.alias.items())
+            columns.extend(aliases)
+        sql.append(', '.join(columns))
         sql.append('FROM "%s"' % query.table)
         if query.where:
             sql.append("WHERE")
@@ -169,12 +186,12 @@ class Compiler(object):
             sql.append("GROUP BY %s" % ', '.join((self.quote(f) for f in query.groupby)))
         if query.orderby:
             orderby = []
-            for field_name in query.orderby:
-                if field_name.startswith("-"):
-                    field_name = field_name[1:]
-                    orderby.append(self.quote(field_name) + " DESC")
+            for column in query.orderby:
+                if column.startswith("-"):
+                    column = column[1:]
+                    orderby.append(self.quote(column) + " DESC")
                 else:
-                    orderby.append(self.quote(field_name))
+                    orderby.append(self.quote(column))
             sql.append("ORDER BY %s" % ', '.join((f for f in orderby)))
         if query.limit is not None:
             if isinstance(query.limit, slice):
@@ -190,7 +207,7 @@ class Compiler(object):
     def quote(self,name):
         return '"%s"' % name
 
-    def alias_field(self,o,l):
+    def alias_column(self,o,l):
         if o.find('"') >= 0:
             return '%s AS "%s"' % (o,l)
         return '"%s" AS "%s"' % (o,l)
