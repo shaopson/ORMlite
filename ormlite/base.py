@@ -12,12 +12,12 @@ class Configuration(object):
         self.compiler = None
         self.logger = None
         self._debug = False
-        self._models = []
+        self.models = {}
 
     def conf_db(self,config):
-        self.db_config = config
         if 'ENGINE' not in config:
             raise ORMLiteException("conf_db method 'config' parameter missing 'ENGINE'")
+        self.db_config = config
         self.db_engine = import_module(config["ENGINE"])
         self.db = self.db_engine.base.Database(config)
         self.compiler = Compiler(self.db)
@@ -34,6 +34,15 @@ class Configuration(object):
         self._debug = value
         if self._debug and not self.logger:
             self.logger = logging
+
+    def register_model(self,model):
+        key = "%s.%s" % (model.__module__, model._opts.model_name)
+        self.models[key] = model
+
+    def get_model(self,module,model_name):
+        key = "%s.%s" % (module, model_name)
+        return self.models.get(key,None)
+
 
 configuration = Configuration()
 
