@@ -100,11 +100,17 @@ class DateField(Field):
             return value.date()
         return value
 
-    def on_insert(self):
-        return datetime.datetime.now().date()
+    @property
+    def value_on_create(self):
+        if self.auto_now:
+            return datetime.datetime.now().date()
+        return None
 
-    def on_update(self):
-        return datetime.datetime.now().date()
+    @property
+    def value_on_update(self):
+        if self.auto_now_add:
+            return datetime.datetime.now().date()
+        return None
 
 
 class DateTimeField(Field):
@@ -114,11 +120,18 @@ class DateTimeField(Field):
         self.auto_now = auto_now
         self.auto_now_add = auto_now_add
 
-    def on_insert(self):
-        return datetime.datetime.now()
+    @property
+    def value_on_create(self):
+        if self.auto_now_add:
+            return datetime.datetime.now()
+        return None
 
-    def on_update(self):
-        return datetime.datetime.now()
+    @property
+    def value_on_update(self):
+        if self.auto_now:
+            return datetime.datetime.now()
+        return None
+
 
 class FloatField(Field):
 
@@ -134,11 +147,6 @@ class IntegerField(Field):
 
 class TextField(Field):
 
-    def __init__(self,auto_now=False,auto_now_add=False,**kwargs):
-        super(TextField,self).__init__(**kwargs)
-        self.auto_now = auto_now
-        self.auto_now_add = auto_now_add
-
     def get_type(self):
         return "TextField"
 
@@ -148,17 +156,29 @@ class TextField(Field):
 
 class TimeFiled(Field):
 
+    def __init__(self,auto_now=False,auto_now_add=False,**kwargs):
+        super(TimeFiled,self).__init__(**kwargs)
+        self.auto_now = auto_now
+        self.auto_now_add = auto_now_add
+
     def get_type(self):
         return "TimeField"
 
     def to_sql(self,value):
         pass
 
-    def on_insert(self):
-        return datetime.datetime.now().time()
+    @property
+    def value_on_create(self):
+        if self.auto_now_add:
+            return datetime.datetime.now().time()
+        return None
 
-    def on_update(self):
-        return datetime.datetime.now().time()
+    @property
+    def value_on_update(self):
+        if self.auto_now:
+            return datetime.datetime.now().time()
+        return None
+
 
 class PrimaryKey(IntegerField):
 
