@@ -41,7 +41,7 @@ class Compiler(object):
                 name,symbol = k,'eq'
             op = self.operators.get(symbol)
             if symbol == "in":
-                op = op % (",".join(self.placeholder*len(v)))
+                op = op % (",".join([self.placeholder] * len(v)))
                 params.extend(v)
             elif symbol == "range":
                 op = op % (self.placeholder,self.placeholder)
@@ -49,7 +49,7 @@ class Compiler(object):
             else:
                 op = op % self.placeholder
                 params.append(v)
-            sql.append("%s %s" % (name, op))
+            sql.append("%s %s" % (self.quote(name), op))
         return " AND ".join(sql),params
 
     def _compile_where(self,where):
@@ -74,6 +74,7 @@ class Compiler(object):
         fields = instance._opts.fields
         columns = []
         params = []
+        placeholders = []
         for field in fields:
             if field.is_related:
                 obj = getattr(instance,field.name,None)
@@ -83,13 +84,14 @@ class Compiler(object):
                     value = getattr(instance,field.get_column(),None)
             else:
                 value = getattr(instance,field.name,None)
-                if value is None and hasattr(field,"on_insert"):
-                    value = field.on_insert()
+                if value is None and getattr(field,"value_on_create",None):
+                    value = field.value_on_create
                     setattr(instance,field.name,value)
                 value = field.adapt(value)
-            columns.append('"%s"' % field.get_column())
+            columns.append(self.quote(field.get_column()))
             params.append(value)
-        sql = 'INSERT INTO "%s" (%s) VALUES (%s);' % (table, ",".join(columns), ",".join(self.placeholder * len(params)))
+            placeholders.append(self.placeholder)
+        sql = 'INSERT INTO `%s` (%s) VALUES (%s);' % (table, ",".join(columns), ",".join(placeholders))
         return sql,tuple(params)
 
     def _compile_delete(self,delete):
@@ -105,12 +107,12 @@ class Compiler(object):
         else:
             raise CompileError("Delete object's 'where' attribute cannot be empty")
         where_sql,where_params = self._compile_where(where)
-        sql = 'DELETE FROM "%s" WHERE %s' % (table, where_sql)
+        sql = 'DELETE FROM `%s` WHERE %s' % (table, where_sql)
         return sql,tuple(where_params)
 
     def _compile_update(self,update):
         instance = update.instance
-        sql = ['UPDATE "%s" SET' % update.table]
+        sql = ['UPDATE `%s` SET' % update.table]
         update_columns = {}
         params = []
         if instance:
@@ -119,7 +121,9 @@ class Compiler(object):
             update.add_where({instance.get_pk_field().name: instance.pk})
             if update.fields:
                 for field_name in update.fields:
-                    update_columns[field_name] = self.placeholder
+                    field = update.model._opts.get_field(field_name)
+                    column = field.get_column()
+                    update_columns[self.quote(column)] = self.placeholder
                     value = getattr(instance,field_name)
                     params.append(value)
             else:
@@ -127,21 +131,25 @@ class Compiler(object):
                     #跳过主键
                     if field.primary_key:
                         continue
-                    # 如果是关系对象或有时间对象需要自动更新时间 [待处理]
+                    # 如果是关系对象或有时间对象需要自动更新时间
                     if field.is_related:
                         obj = getattr(instance,field.name,None)
                         value = obj.pk if obj else getattr(instance,field.get_column(),None)
                     else:
                         value = getattr(instance, field.name)
-                    update_columns[field.get_column()] = self.placeholder
+                        if value is None and getattr(field,'value_on_update',None):
+                            value = field.value_on_update
+                            setattr(instance, field.name, value)
+                    update_columns[self.quote(field.get_column())] = self.placeholder
                     params.append(value)
         elif update.update_fields:
             for field_name, value in update.update_fields.items():
-                update_columns[field_name] = self.placeholder
+                field = update.model._opts.get_field(field_name)
+                update_columns[self.quote(field.get_column())] = self.placeholder
                 params.append(value)
         else:
             raise CompileError("No fields need update")
-        expressions = ['"%s" = %s' % (k, v) for k, v in update_columns.items()]
+        expressions = ['%s = %s' % (k, v) for k, v in update_columns.items()]
         sql.append(','.join(expressions))
         where = update.where
         if where:
@@ -158,62 +166,68 @@ class Compiler(object):
         params = []
         columns = []
         aliases = []
-        if query.fields:
-            for field_name in query.fields:
+        if query._fields:
+            for field_name in query._fields:
                 field = query.model._opts.get_field(field_name)
                 if field:
                     column = field.get_column()
                     if field.is_related:
-                        aliases.append(self.alias_column(column,field.name))
+                        aliases.append(self.alias_column(self.quote(column),self.quote(field.name)))
                     else:
-                        columns.append(column)
+                        columns.append(self.quote(column))
                 else:
-                    columns.append(field_name)
-
-        if query.distinct:
+                    columns.append(self.quote(field_name))
+        if query._distinct:
             sql.append("DISTINCT")
-        if query.alias:
-            aliases.extend(self.alias_column(v,k) for k, v in query.alias.items())
+        if query._alias:
+            aliases.extend(self.alias_column(v,self.quote(k)) for k, v in query._alias.items())
             columns.extend(aliases)
         sql.append(', '.join(columns))
-        sql.append('FROM "%s"' % query.table)
-        if query.where:
+        sql.append('FROM `%s`' % query.table)
+        if query._where:
             sql.append("WHERE")
-            where_sql, where_params = self._compile_where(query.where)
+            where_sql, where_params = self._compile_where(query._where)
             sql.append(where_sql)
             params.extend(where_params)
-        if query.groupby:
-            sql.append("GROUP BY %s" % ', '.join((self.quote(f) for f in query.groupby)))
-        if query.orderby:
+        if query._groupby:
+            groups = []
+            for field_name in query._groupby:
+                field = query.model._opts.get_field(field_name)
+                if field:
+                    column = field.get_column()
+                else:
+                    column = field_name
+                groups.append(self.quote(column))
+            sql.append("GROUP BY %s" % ', '.join(groups))
+        if query._orderby:
             orderby = []
-            for column in query.orderby:
+            for field_name in query._orderby:
+                field = query.model._opts.get_field(field_name)
+                if field:
+                    column = field.get_column()
+                else:
+                    column = field_name
                 if column.startswith("-"):
                     column = column[1:]
-                    orderby.append(self.quote(column) + " DESC")
+                    orderby.append("`%s` DESC" % column)
                 else:
                     orderby.append(self.quote(column))
             sql.append("ORDER BY %s" % ', '.join((f for f in orderby)))
-        if query.limit is not None:
-            if isinstance(query.limit, slice):
-                start = query.limit.start or 0
-                length = query.limit.stop or -1 # max length
+        if query._limit is not None:
+            if isinstance(query._limit, slice):
+                start = query._limit.start or 0
+                length = query._limit.stop or -1 # max length
                 sql.append("LIMIT %s OFFSET %s" % (length, start))
-            elif isinstance(query.limit, int):
-                sql.append("LIMIT 1 OFFSET %s" % query.limit)
+            elif isinstance(query._limit, int):
+                sql.append("LIMIT 1 OFFSET %s" % query._limit)
         sql.append(";")
         sql = ' '.join(sql)
         return sql, tuple(params)
 
     def quote(self,name):
-        return '"%s"' % name
+        return '`%s`' % name
 
     def alias_column(self,o,l):
-        if o.find('"') >= 0:
-            return '%s AS "%s"' % (o,l)
-        return '"%s" AS "%s"' % (o,l)
-
-
-
-
+        return '%s AS %s' % (o,l)
 
 
