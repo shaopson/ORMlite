@@ -104,6 +104,7 @@ configuration.conf_db({
 
 ####mysql
 当使用mysql时，需要安装mysql-connector
+
 ```
 from ormlite import configuration
 configuration.conf_db({
