@@ -19,7 +19,7 @@ class Configuration(object):
             raise ORMLiteException("conf_db method 'config' parameter missing 'ENGINE'")
         self.db_config = config
         self.db_engine = import_module(config["ENGINE"])
-        self.db = self.db_engine.base.Database(config)
+        self.db = self.db_engine.Database(config)
         self.compiler = Compiler(self.db)
 
     def set_logger(self,logger):
