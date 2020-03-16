@@ -90,3 +90,32 @@ result = User.object.all().values(count=Count('id'))
 result = User.object.all().values(count=Count('name')).group('name')
 #[{'name': 'aa', 'count': 1}, {'name': 'bb', 'count': 1}, {'name': 'cc', 'count': 1}]
 ```
+
+###数据库配置
+####sqlite3
+
+```
+from ormlite import configuration
+configuration.conf_db({
+    "ENGINE":"ormlite.db.sqlite3",
+    "NAME":"db.sqlite3",
+})
+```
+
+####mysql
+当使用mysql时，需要安装mysql-connector
+```
+from ormlite import configuration
+configuration.conf_db({
+    "ENGINE":"ormlite.db.mysql",
+    'NAME': 'ormlite',
+    'USER': 'root',
+    'PASSWORD': 'ormlite',
+    'HOST': 'localhost',
+    'PORT': '3306',
+    'OPTIONS': {
+        'autocommit': True,
+    }
+})
+```
+
