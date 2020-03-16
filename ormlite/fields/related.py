@@ -1,5 +1,5 @@
 from ormlite import configuration
-from . import Field
+from . import Field,PrimaryKey
 
 
 #外键约束
@@ -23,7 +23,10 @@ class RelatedField(Field):
         self.related_field = None
 
     def get_type(self):
-        return self.get_related_field().get_type()
+        field = self.get_related_field()
+        if isinstance(field,PrimaryKey):
+            return "IntegerField"
+        return field.get_type()
 
     def get_column(self):
         return self.name + "_id"
