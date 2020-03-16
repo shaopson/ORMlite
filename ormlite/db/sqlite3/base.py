@@ -1,12 +1,6 @@
+import datetime
 import sqlite3 as engine
 from ormlite.exception import InvalidConfiguration
-
-def row_to_dict(cursor,row):
-    result = {}
-    cols = cursor.description
-    for col,value in zip(cols,row):
-        result[col[0]] = value
-    return result
 
 
 def parse_bool(value):
@@ -14,8 +8,21 @@ def parse_bool(value):
     return bool(int(value)) if value in ('0','1') else value
 
 
+def time_converter(value):
+    value = value.decode()
+    return datetime.datetime.strptime(value,"%H:%M:%S.%f").time()
+
+
+def time_adapter(value):
+    if isinstance(value,datetime.time):
+        return value.strftime("%H:%M:%S.%f")
+    return value
+
+
 engine.register_converter("BOOL",parse_bool)
-engine.register_converter("bool",parse_bool)
+engine.register_converter("TIME",time_converter)
+engine.register_adapter(engine.Time,time_adapter)
+
 
 
 class Database(object):
@@ -93,3 +100,6 @@ class Database(object):
         self.connector.close()
         self.connector = None
 
+#SQL标准规定字符串必须使用“单引号”,引用时标识符(如表名和列名)必须使用“双引号”
+#sqlte3 使用的是双引号，同时sqlite3兼用mysql的 “反引号”
+#所以这里统一使用反引号
