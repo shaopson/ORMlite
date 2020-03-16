@@ -92,6 +92,7 @@ result = User.object.all().values(count=Count('name')).group('name')
 ```
 
 ###数据库配置
+
 ####sqlite3
 
 ```
@@ -103,6 +104,7 @@ configuration.conf_db({
 ```
 
 ####mysql
+
 当使用mysql时，需要安装mysql-connector
 
 ```
@@ -119,7 +121,5 @@ configuration.conf_db({
     }
 })
 ```
-
-
 
 
