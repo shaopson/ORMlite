@@ -1,6 +1,6 @@
 import copy
 from ormlite.base import configuration
-from ormlite.db.utils import Count
+
 
 def flat_converter(row,cursor):
 	return [values[0] for values in row]
@@ -50,40 +50,44 @@ def get_object_converter(cls):
 	return converter
 
 
-class Result(object):
+Min = lambda x:'MIN(`%s`)' % x
 
-	def __init__(self,data=None,converter=None):
-		self.data = data
-		self.converter = converter
+Max = lambda x:'MAX(`%s`)' % x
+
+Sum = lambda x:'SUM(`%s`)' % x
+
+Count = lambda x:'COUNT(`%s`)' % x
+
+Avg = lambda x:'AVG(`%s`)' % x
+
 
 
 class Query(object):
 	statement = "SELECT"
 
-	def __init__(self,model,fields=None,where=None,**kwargs):
+	def __init__(self,model,fields=None,where=None):
 		self.model = model
-		self.table = model._opts.model_name
-		self.fields = list(fields) or []
-		self.where = where or Where()
-		self.alias = kwargs.get('alias',{})
-		self.distinct = kwargs.get('distinct',False)
-		self.orderby = kwargs.get('orderby',[])
-		self.groupby = kwargs.get('groupby',[])
-		self.limit = kwargs.get('limit',None)
-		self.function = None
-		self.cache = None
+		self.table = model.__name__
+		self._fields = list(fields) if fields else []
+		self._where = where.copy() if where else Where()
+		self._alias = {}
+		self._distinct = False
+		self._orderby = []
+		self._groupby = []
+		self._limit = None
+		self._compiler = None
+		self._converter = None
+		self._cache = None
 		self.result = None
-		self.compiler = None
-		self.converter = None
 
 	def as_sql(self):
-		if self.compiler is None:
-			self.compiler = configuration.compiler
-		return self.compiler.compile(self)
+		if self._compiler is None:
+			self._compiler = configuration.compiler
+		return self._compiler.compile(self)
 
-	def execute(self,db=None):
-		if self.converter is None:
-			self.converter = get_object_converter(self.model)
+	def execute(self):
+		if self._converter is None:
+			self._converter = get_object_converter(self.model)
 		sql, params = self.as_sql()
 		if configuration.debug:
 			s = sql.replace("?","%r")
@@ -95,19 +99,18 @@ class Query(object):
 				cursor.execute(sql, params)
 			else:
 				cursor.execute(sql)
-			self.cache = cursor.fetchall()
-			self.result = self.converter(self.cache,cursor)
+			self._cache = cursor.fetchall()
+			self.result = self._converter(self._cache,cursor)
 		return self.result
 
 	def copy(self):
 		#克隆并返回一个新的对象
-		new = self.__class__(self.model,self.fields)
-		new.where = self.where.copy()
-		new.alias = self.alias.copy()
-		new.distinct = self.distinct
-		new.groupby = list(self.groupby)
-		new.orderby = list(self.orderby)
-		new.limit = self.limit
+		new = self.__class__(self.model,self._fields,self._where)
+		new._alias = self._alias.copy()
+		new._distinct = self._distinct
+		new._limit = self._limit
+		new._groupby = list(self._groupby)
+		new._orderby = list(self._orderby)
 		return new
 
 	def __getitem__(self,value):
@@ -122,7 +125,7 @@ class Query(object):
 		if self.result:
 			return list(self.result)[value]
 		new = self.copy()
-		new.limit = value
+		new._limit = value
 		new.execute()
 		if isinstance(value,int):
 			return new.result[0] if new.result else []
@@ -152,65 +155,65 @@ class Query(object):
 		query = self.copy().query(**kwargs)
 		query.execute()
 		if not query.result:
-			raise query.model.DoesNotExists('Not query %s object record:%s' % (self.model,query.where))
+			raise query.model.DoesNotExists('Not query %s object record:%s' % (self.model,query._where))
 		elif len(query.result) > 1:
-			raise query.model.MultiResult('Query multiple %s object records:%s' % (self.model.__name__,query.where))
+			raise query.model.MultiResult('Query multiple %s object records:%s' % (self.table,query._where))
 		return query.result[0]
 
 	def count(self):
 		if self.result is not None:
 			return len(self.result)
 		new = self.copy()
-		new.fields = []
-		new.alias = {"count":Count(self.model.get_pk_name())}
-		new.converter = flat_converter
+		new._fields = []
+		new._alias = {"count":Count(self.model.get_pk_name())}
+		new._converter = flat_converter
 		new.execute()
 		return new.result[0]
 
 	def sort(self,*fields):
 		new = self.copy()
-		new.orderby.extend(fields)
-		new.converter = self.converter
+		new._orderby.extend(fields)
+		new._converter = self._converter
 		return new
 
 	def items(self,*fields,**kwargs):
 		flat = kwargs.pop('flat', False)
 		new = self.copy()
-		new.alias.update(kwargs)
-		new.fields = list(fields)
+		new._alias.update(kwargs)
+		new._fields = list(fields)
 		if flat:
-			new.converter = flat_converter
+			new._converter = flat_converter
 		else:
-			new.converter = raw_data#get_fields_converter(new.fields)
+			new._converter = raw_data#get_fields_converter(new.fields)
 		return new
 
 	def values(self,*fields,**kwargs):
 		new = self.copy()
-		new.fields = list(fields)
+		new._fields = list(fields)
 		if kwargs:
-			new.alias.update(kwargs)
-		new.converter = dict_converter
+			new._alias.update(kwargs)
+		new._converter = dict_converter
 		return new
 
 	def query(self,**kwargs):
 		where = Where(kwargs)
 		new = self.copy()
-		new.where &= where
-		new.converter = get_object_converter(self.model)
+		new._where &= where
+		new._converter = get_object_converter(self.model)
 		return new
 
 	def exclude(self,**kwargs):
 		where = ~Where(kwargs)
 		new = self.copy()
-		new.where &= where
-		new.converter = get_object_converter(self.model)
+		new._where &= where
+		new._converter = get_object_converter(self.model)
 		return new
 
 	def group(self,*fields):
 		new = self.copy()
-		new.fields.extend(fields)
-		new.groupby = list(fields)
-		new.converter = dict_converter
+		new._fields.extend(fields)
+		new._groupby = list(fields)
+		new._converter = dict_converter
 		return new.execute()
 
 	def update(self,**update_fields):
@@ -224,16 +227,16 @@ class Query(object):
 		if self.result is not None:
 			return self.result[-1]
 		new = self.copy()
-		if new.orderby:
+		if new._orderby:
 			new_orderby = []
-			for field_name in new.orderby:
+			for field_name in new._orderby:
 				if field_name.startswith('-'):
 					new_orderby.append(field_name[1:])
 				else:
 					new_orderby.append("-" + field_name)
-			new.orderby = new_orderby
+			new._orderby = new_orderby
 		else:
-			new.orderby = ['-id']
+			new._orderby = ['-id']
 		return new.first()
 
 	def exists(self):
@@ -357,6 +360,20 @@ class Update(Statement):
 		super(Update,self).__init__(model,instance,fields,where)
 		self.update_fields = update_fields
 
+	def execute(self,db=None):
+		sql, params = self.as_sql()
+		if configuration.debug:
+			s = sql.replace("?",'%r')
+			configuration.logger.debug(s % params)
+		db = configuration.db
+		with db as connection:
+			cursor = connection.cursor()
+			if params:
+				cursor.execute(sql,params)
+			else:
+				cursor.execute(sql)
+
+
 
 class Insert(Statement):
 	statement = "INSERT"
@@ -364,7 +381,8 @@ class Insert(Statement):
 	def execute(self,db=None):
 		sql, params = self.as_sql()
 		if configuration.debug:
-			s = sql.replace("?",'%r')
+			placeholder = configuration.db.placeholder
+			s = sql.replace(placeholder,'%r')
 			configuration.logger.debug(s % params)
 		db = configuration.db
 		with db as connection:
